@@ -1,0 +1,71 @@
+menu "Telescope Configuration"
+
+config WIFI_SSID
+    string "WiFi ssid name"
+	default ""
+
+config WIFI_PASS
+    string "WiFi password"
+	default ""
+
+config SERVER_PORT
+    int "Server port"
+	range 1 65535
+	default 9333
+
+config GPIO_RA_EN
+    int "R.A. Motor EN pin"
+	range 0 34
+	default 12
+
+config GPIO_RA_PUL
+    int "R.A. Motor PUL/STEP pin"
+	range 0 34
+	default 13
+
+config GPIO_RA_DIR
+    int "R.A. Motor DIR pin"
+	range 0 34
+	default 14
+
+config RA_RESOLUTION
+	int "R.A. Motor Resolution (pulses per step)"
+	default 16
+
+config RA_CYCLE_STEPS
+	int "R.A Motor Steps per Cycle"
+	default 5760
+
+config RA_GEAR_RATIO
+	int "R.A. Axis Gear Ratio (slow down > 1)"
+	default 130
+
+
+config GPIO_DEC_EN
+    int "Dec Motor EN pin"
+	range 0 34
+	default 12
+
+config GPIO_DEC_PUL
+    int "Dec Motor PUL/STEP pin"
+	range 0 34
+	default 13
+
+config GPIO_DEC_DIR
+    int "Dec Motor DIR pin"
+	range 0 34
+	default 14
+
+config DEC_RESOLUTION
+	int "Dec Motor Resolution (pulses per step)"
+	default 16
+
+config DEC_CYCLE_STEPS
+	int "Dec Motor Steps per Cycle"
+	default 5760
+
+config DEC_GEAR_RATIO
+	int "Dec Axis Gear ratio (slow down > 1)"
+	default 130	
+
+endmenu
