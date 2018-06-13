@@ -17,9 +17,6 @@
 #include "lwip/sys.h"
 #include <lwip/netdb.h>
 
-#include "ssd1306.h"
-#include "fonts.h"
-
 const static char *TAG = "Telescope";
 
 /* ------ consts ---------- */
@@ -116,65 +113,25 @@ ledc_timer_config_t dec_pmw_timer = {
     .timer_num = LEDC_TIMER_1
 };
 
-typedef struct {
-    char * title;
-    char * line1;
-    char * line2;
-    char * line3;
-    char line_font;
-    char title_font;
-} display_t;
-
-void updateDisplay(display_t *content) {
-    ssd1306_clear(0);    
-    ssd1306_select_font(0, content->title_font ? content->title_font - 1 : 1);
-    if (content->title) ssd1306_draw_string(0, 1, 3, content->title, 1, 0);
-    ssd1306_select_font(0, content->line_font ? content->line_font - 1 : 1);
-    if (content->line1) ssd1306_draw_string(0, 1, 19, content->line1, 1, 0);
-    if (content->line2) ssd1306_draw_string(0, 1, 35, content->line2, 1, 0);
-    if (content->line3) ssd1306_draw_string(0, 1, 51, content->line3, 1, 0);
-    // ssd1306_draw_rectangle(0, 0, 0, 128, 16, 1);
-	// ssd1306_draw_rectangle(0, 0, 16, 128, 48, 1);
-    ssd1306_refresh(0, true);
-}
-
 int8_t tracking = 0;
 char pulseGuiding = 0;
 int raSpeed = 0, decSpeed = 0, raGuideSpeed = 7500, decGuideSpeed = 7500;
-
-char my_ip[] = "255.255.255.255";
-char my_ip_port[] = "255.255.255.255:12345";
-char stepper_line1[] = "R.A. +00.0000 r/d";
-char stepper_line2[] = "Dec  +00.0000 r/d";
-char stepper_line3[] = "GUIDING/N  TRACKING/N";
-display_t stepper_display = {
-    .title = my_ip_port,
-    .line1 = stepper_line1,
-    .line2 = stepper_line2,
-    .line3 = stepper_line3,
-    .line_font = 1
-};
 
 void updateStepper() {
     double raCyclesPerSiderealDay = raSpeed / 15000.0;
     double decCyclesPerDay = decSpeed / 15000.0;
 
-    char* guidingstr = "   ";
     switch (pulseGuiding) {
         case PULSE_GUIDING_DIR_NORTH:
-            guidingstr = "G/N";
             decCyclesPerDay += decGuideSpeed / 15000.0;
             break;
         case PULSE_GUIDING_DIR_SOUTH:
-            guidingstr = "G/S";
             decCyclesPerDay -= decGuideSpeed / 15000.0;
             break;
         case PULSE_GUIDING_DIR_WEST:
-            guidingstr = "G/W";
             raCyclesPerSiderealDay += raGuideSpeed / 15000.0;
             break;
         case PULSE_GUIDING_DIR_EAST:
-            guidingstr = "G/E";
             raCyclesPerSiderealDay -= raGuideSpeed / 15000.0;
             break;
     }
@@ -182,18 +139,6 @@ void updateStepper() {
     if (tracking) {
         raCyclesPerSiderealDay += 1;
     }
-
-    sprintf(stepper_line1, "R.A. %+8.4f r/d", raCyclesPerSiderealDay);
-    sprintf(stepper_line2, "Dec  %+8.4f r/d", decCyclesPerDay);
-    char* trackingstr = "   ";
-    if (tracking > 0) {
-        trackingstr = "T/N";
-    } else if (tracking < 0) {
-        trackingstr = "T/W";
-    }
-   
-    sprintf(stepper_line3, "%s               %s",guidingstr, trackingstr);
-    updateDisplay(&stepper_display);
 
     if (raCyclesPerSiderealDay < 0) {
         raCyclesPerSiderealDay = -raCyclesPerSiderealDay;
@@ -448,38 +393,14 @@ static void wait_wifi(void *p)
 {
     while (1) {
         LOGI(TAG, "Waiting for AP connection...");
-        int dots = 0;
         EventBits_t bits = xEventGroupWaitBits(wifi_event_group, CONNECTED_BIT, false, true, 1000 / portTICK_PERIOD_MS);
         while(!bits) {
-            dots = (dots + 1) % 4;
-            char searching[20] = "Searching WiFi \0\0\0\0";
-            for (int i = 0; i < dots; i ++) {
-                searching[i + (15/* "Searching WiFi ".length */)] = '.';
-            }
-            display_t disp = {
-                .title = searching,
-                .line1 = "WiFi config:",
-                .line2 = "SSID: "WIFI_SSID,
-                .line3 = "PASS: "WIFI_PASS,
-            };
-            updateDisplay(&disp);
             bits = xEventGroupWaitBits(wifi_event_group, CONNECTED_BIT, false, true, 1000 / portTICK_PERIOD_MS);
         }
         LOGI(TAG, "Connected to AP");
 
         connected = true;
 
-        char ipstr[] = "Addr: 255.255.255.255";
-        char portstr[] = "Port: 12345";
-        sprintf(ipstr, "Addr: %s", my_ip);
-        sprintf(portstr, "Port: %d", UDP_PORT);
-        display_t disp = {
-            .title = "Staring Server",
-            .line1 = "Listening on:",
-            .line2 = ipstr,
-            .line3 = portstr,
-        };
-        updateDisplay(&disp);
         SLEEP(1000);
 
         esp_timer_create_args_t args = {
@@ -511,8 +432,6 @@ static esp_err_t wifi_event_handler(void *ctx, system_event_t *event)
         esp_wifi_connect();
         break;
     case SYSTEM_EVENT_STA_GOT_IP:
-        sprintf(my_ip, "%s", inet_ntoa(event->event_info.got_ip.ip_info.ip));
-        sprintf(my_ip_port, "%s:%d", my_ip, UDP_PORT);
         xEventGroupSetBits(wifi_event_group, CONNECTED_BIT);
         break;
     case SYSTEM_EVENT_STA_DISCONNECTED:
@@ -520,19 +439,6 @@ static esp_err_t wifi_event_handler(void *ctx, system_event_t *event)
             esp_wifi_connect();
             xEventGroupClearBits(wifi_event_group, CONNECTED_BIT);
         } else {
-            for (int i = 3; i > 0; i --) {
-                char buf[20];
-                sprintf(buf, "Restart in %d sec", i);
-                LOGE(TAG, "WiFi disconnected, %s", buf);
-                display_t disp = {
-                    .title = "WiFi Disconnected",
-                    .line1 = buf,
-                    .line2 = "",
-                    .line3 = "",
-                };
-                updateDisplay(&disp);
-                SLEEP(1000);
-            }
             esp_restart();        
         }
         break;
@@ -569,20 +475,6 @@ void app_main(void)
     esp_timer_init();
     LOGI("BOOT", "nvs_flash_init");
     ESP_ERROR_CHECK(nvs_flash_init());
-    LOGI("BOOT", "ssd1306_init");
-    if (!ssd1306_init(0, 19, 22)) {
-        LOGE(TAG, "Cannot init display, restart after 1 second");
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
-        esp_restart();
-    }
-    display_t disp = {
-        .title = "Searching WiFi",
-        .line1 = "WiFi config:",
-        .line2 = "SSID: "WIFI_SSID,
-        .line3 = "PASS: "WIFI_PASS,
-    };
-    LOGI("BOOT", "updateDisplay");
-    updateDisplay(&disp);
     LOGI("BOOT", "wifi_conn_init");
     wifi_conn_init();
     LOGI("BOOT", "xTaskCreate wait_wifi");
