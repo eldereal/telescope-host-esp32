@@ -17,6 +17,9 @@
 #include "lwip/sys.h"
 #include <lwip/netdb.h>
 
+#include "ssd1306.h"
+#include "fonts.h"
+
 const static char *TAG = "Telescope";
 
 /* ------ consts ---------- */
@@ -36,13 +39,18 @@ const static char *TAG = "Telescope";
 #define LEN(arr) (sizeof(arr) / sizeof(arr[0]))
 #define DUTY_RES LEDC_TIMER_13_BIT
 #define DUTY (((1 << DUTY_RES) - 1) / 2)
-#define LOGI(tag, format, ...) ESP_LOGI(tag, "[%lld] "format, esp_timer_get_time(), ##__VA_ARGS__)
-#define LOGE(tag, format, ...) ESP_LOGE(tag, "[%lld] "format, esp_timer_get_time(), ##__VA_ARGS__)
+// #define LOGI(tag, format, ...) ESP_LOGI(tag, "[%lld] "format, esp_timer_get_time(), ##__VA_ARGS__)
+// #define LOGE(tag, format, ...) ESP_LOGE(tag, "[%lld] "format, esp_timer_get_time(), ##__VA_ARGS__)
+#define LOGI(tag, format, ...)
+#define LOGE(tag, format, ...)
 /* ------ configs ---------- */
-#define WIFI_SSID    (CONFIG_WIFI_SSID)
-#define WIFI_PASS    (CONFIG_WIFI_PASS)
+#define WIFI_SSID   CONFIG_WIFI_SSID
+#define WIFI_PASS   CONFIG_WIFI_PASS
 
 #define UDP_PORT CONFIG_SERVER_PORT
+
+#define DISPLAY_SCL (CONFIG_DISPLAY_SCL)
+#define DISPLAY_SDA (CONFIG_DISPLAY_SDA)
 
 #define GPIO_RA_EN  (CONFIG_GPIO_RA_EN)
 #define GPIO_RA_DIR (CONFIG_GPIO_RA_DIR)
@@ -108,25 +116,65 @@ ledc_timer_config_t dec_pmw_timer = {
     .timer_num = LEDC_TIMER_1
 };
 
-char tracking = 0;
+typedef struct {
+    char * title;
+    char * line1;
+    char * line2;
+    char * line3;
+    char line_font;
+    char title_font;
+} display_t;
+
+void updateDisplay(display_t *content) {
+    ssd1306_clear(0);    
+    ssd1306_select_font(0, content->title_font ? content->title_font - 1 : 1);
+    if (content->title) ssd1306_draw_string(0, 1, 3, content->title, 1, 0);
+    ssd1306_select_font(0, content->line_font ? content->line_font - 1 : 1);
+    if (content->line1) ssd1306_draw_string(0, 1, 19, content->line1, 1, 0);
+    if (content->line2) ssd1306_draw_string(0, 1, 35, content->line2, 1, 0);
+    if (content->line3) ssd1306_draw_string(0, 1, 51, content->line3, 1, 0);
+    // ssd1306_draw_rectangle(0, 0, 0, 128, 16, 1);
+	// ssd1306_draw_rectangle(0, 0, 16, 128, 48, 1);
+    ssd1306_refresh(0, true);
+}
+
+int8_t tracking = 0;
 char pulseGuiding = 0;
 int raSpeed = 0, decSpeed = 0, raGuideSpeed = 7500, decGuideSpeed = 7500;
+
+char my_ip[] = "255.255.255.255";
+char my_ip_port[] = "255.255.255.255:12345";
+char stepper_line1[] = "R.A. +00.0000 r/d";
+char stepper_line2[] = "Dec  +00.0000 r/d";
+char stepper_line3[] = "GUIDING/N  TRACKING/N";
+display_t stepper_display = {
+    .title = my_ip_port,
+    .line1 = stepper_line1,
+    .line2 = stepper_line2,
+    .line3 = stepper_line3,
+    .line_font = 1
+};
 
 void updateStepper() {
     double raCyclesPerSiderealDay = raSpeed / 15000.0;
     double decCyclesPerDay = decSpeed / 15000.0;
 
+    char* guidingstr = "   ";
     switch (pulseGuiding) {
         case PULSE_GUIDING_DIR_NORTH:
+            guidingstr = "G/N";
             decCyclesPerDay += decGuideSpeed / 15000.0;
             break;
         case PULSE_GUIDING_DIR_SOUTH:
+            guidingstr = "G/S";
             decCyclesPerDay -= decGuideSpeed / 15000.0;
             break;
         case PULSE_GUIDING_DIR_WEST:
+            guidingstr = "G/W";
             raCyclesPerSiderealDay += raGuideSpeed / 15000.0;
             break;
         case PULSE_GUIDING_DIR_EAST:
+            guidingstr = "G/E";
             raCyclesPerSiderealDay -= raGuideSpeed / 15000.0;
             break;
     }
@@ -135,6 +183,18 @@ void updateStepper() {
         raCyclesPerSiderealDay += 1;
     }
 
+    sprintf(stepper_line1, "R.A. %+8.4f r/d", raCyclesPerSiderealDay);
+    sprintf(stepper_line2, "Dec  %+8.4f r/d", decCyclesPerDay);
+    char* trackingstr = "   ";
+    if (tracking > 0) {
+        trackingstr = "T/N";
+    } else if (tracking < 0) {
+        trackingstr = "T/W";
+    }
+   
+    sprintf(stepper_line3, "%s               %s",guidingstr, trackingstr);
+    updateDisplay(&stepper_display);
+
     if (raCyclesPerSiderealDay < 0) {
         raCyclesPerSiderealDay = -raCyclesPerSiderealDay;
         gpio_set_level(GPIO_RA_DIR, 0);
@@ -142,16 +202,16 @@ void updateStepper() {
         gpio_set_level(GPIO_RA_DIR, 1);
     }
 
-    if (raCyclesPerSiderealDay < RA_CYCLE_MIN) {
+    int rafreq = RA_FREQ(raCyclesPerSiderealDay);
+    if (raCyclesPerSiderealDay < RA_CYCLE_MIN || rafreq == 0) {
         LOGI(TAG, "RA Stop");
         ledc_set_duty(LEDC_HIGH_SPEED_MODE, ra_pmw_channel.channel, 0);
         ledc_update_duty(LEDC_HIGH_SPEED_MODE, ra_pmw_channel.channel);
         gpio_set_level(GPIO_RA_EN, 1);
     } else {
-        if (raCyclesPerSiderealDay > RA_CYCLE_MAX) raCyclesPerSiderealDay = RA_CYCLE_MAX;
-        int freq = RA_FREQ(raCyclesPerSiderealDay);
-        LOGI(TAG, "RA Freq: %d", freq);
-        ledc_set_freq(LEDC_HIGH_SPEED_MODE, ra_pmw_timer.timer_num, freq);
+        if (raCyclesPerSiderealDay > RA_CYCLE_MAX) raCyclesPerSiderealDay = RA_CYCLE_MAX;        
+        LOGI(TAG, "RA Freq: %d", rafreq);
+        ledc_set_freq(LEDC_HIGH_SPEED_MODE, ra_pmw_timer.timer_num, rafreq);
         ledc_set_duty(LEDC_HIGH_SPEED_MODE, ra_pmw_channel.channel, DUTY);        
         ledc_update_duty(LEDC_HIGH_SPEED_MODE, ra_pmw_channel.channel);
         gpio_set_level(GPIO_RA_EN, 0);
@@ -164,16 +224,17 @@ void updateStepper() {
         gpio_set_level(GPIO_DEC_DIR, 1);
     }
 
-    if (decCyclesPerDay < DEC_CYCLE_MIN) {
+
+    int decfreq = DEC_FREQ(decCyclesPerDay);
+    if (decCyclesPerDay < DEC_CYCLE_MIN || decfreq == 0) {
         LOGI(TAG, "DEC Stop");
         ledc_set_duty(LEDC_HIGH_SPEED_MODE, dec_pmw_channel.channel, 0);
         ledc_update_duty(LEDC_HIGH_SPEED_MODE, dec_pmw_channel.channel);
         gpio_set_level(GPIO_DEC_EN, 1);
     } else {
-        if (decCyclesPerDay > DEC_CYCLE_MAX) decCyclesPerDay = DEC_CYCLE_MAX;
-        int freq = DEC_FREQ(decCyclesPerDay);
-        LOGI(TAG, "DEC Freq: %d", freq);
-        ledc_set_freq(LEDC_HIGH_SPEED_MODE, dec_pmw_timer.timer_num, freq);
+        if (decCyclesPerDay > DEC_CYCLE_MAX) decCyclesPerDay = DEC_CYCLE_MAX;        
+        LOGI(TAG, "DEC Freq: %d", decfreq);
+        ledc_set_freq(LEDC_HIGH_SPEED_MODE, dec_pmw_timer.timer_num, decfreq);
         ledc_set_duty(LEDC_HIGH_SPEED_MODE, dec_pmw_channel.channel, DUTY);        
         ledc_update_duty(LEDC_HIGH_SPEED_MODE, dec_pmw_channel.channel);
         gpio_set_level(GPIO_DEC_EN, 0);
@@ -181,7 +242,7 @@ void updateStepper() {
 }
 
 char ackBuf[18];
-char* ackTracking = ackBuf;
+int8_t* ackTracking = (int8_t*)ackBuf;
 char* ackPulseGuiding = ackBuf + 1;
 int* ackRaSpeed = (int*)(ackBuf + 2);
 int* ackDecSpeed = (int*)(ackBuf + 6);
@@ -195,8 +256,7 @@ void sendAck(int sock, struct sockaddr_in *addr, socklen_t addrlen) {
     *ackDecSpeed = ntohl(decSpeed);
     *ackRaGuideSpeed = ntohl(raGuideSpeed);
     *ackDecGuideSpeed = ntohl(decGuideSpeed);
-    char *ip = inet_ntoa(addr->sin_addr);
-    LOGI(TAG, "ack to %s:%d", ip, addr->sin_port);
+    LOGI(TAG, "ack to %s:%d", inet_ntoa(addr->sin_addr), addr->sin_port);
     sendto(sock, ackBuf, LEN(ackBuf), 0, (struct sockaddr *) addr, addrlen);    
 }
 
@@ -236,10 +296,10 @@ int parse_command(char* buf, unsigned int len, int fromSocket, struct sockaddr_i
         } break;
         case CMD_SET_TRACKING: {
             if (len != 2) return 0;
-            char* newTracking = (char*)(buf + 1);
+            int8_t* newTracking = (int8_t*)(buf + 1);
             tracking = *newTracking;
             updateStepper();
-            LOGI(TAG, "setTracking: %s", tracking ? "YES" : "NO");
+            LOGI(TAG, "setTracking: %s", tracking ? (tracking > 0 ? "YES/N" : "YES/S") : "NO");
         } break;
         case CMD_SET_RA_SPEED: {
             if (len != 5) return 0;
@@ -311,6 +371,8 @@ int parse_command(char* buf, unsigned int len, int fromSocket, struct sockaddr_i
     return 1;
 }
 
+
+
 void udp_server(void *pvParameter) {
 
     LOGI(TAG, "Server Started");
@@ -342,6 +404,8 @@ void udp_server(void *pvParameter) {
 
         LOGI(TAG, "Server started at %d", UDP_PORT);
 
+        updateStepper();
+
         //recv loop
         while (1) {
             char buf[129];
@@ -358,56 +422,83 @@ void udp_server(void *pvParameter) {
 }
 
 static EventGroupHandle_t wifi_event_group;
-
-/* The event group allows multiple bits for each event,
-   but we only care about one event - are we connected
-   to the AP with an IP? */
 const static int CONNECTED_BIT = BIT0;
 esp_err_t err;
+bool connected = false;
+
+void stepper_gpio_init(){
+    gpio_pad_select_gpio(GPIO_RA_DIR);
+    gpio_set_direction(GPIO_RA_DIR, GPIO_MODE_OUTPUT);
+    gpio_set_level(GPIO_RA_DIR, 1);
+
+    gpio_pad_select_gpio(GPIO_RA_EN);
+    gpio_set_direction(GPIO_RA_EN, GPIO_MODE_OUTPUT);
+    gpio_set_level(GPIO_RA_EN, 1);
+
+    gpio_pad_select_gpio(GPIO_DEC_DIR);
+    gpio_set_direction(GPIO_DEC_DIR, GPIO_MODE_OUTPUT);
+    gpio_set_level(GPIO_DEC_DIR, 1);
+
+    gpio_pad_select_gpio(GPIO_DEC_EN);
+    gpio_set_direction(GPIO_DEC_EN, GPIO_MODE_OUTPUT);
+    gpio_set_level(GPIO_DEC_EN, 1);
+}
 
 static void wait_wifi(void *p)
 {
     while (1) {
         LOGI(TAG, "Waiting for AP connection...");
-        xEventGroupWaitBits(wifi_event_group, CONNECTED_BIT,
-                            false, true, portMAX_DELAY);
+        int dots = 0;
+        EventBits_t bits = xEventGroupWaitBits(wifi_event_group, CONNECTED_BIT, false, true, 1000 / portTICK_PERIOD_MS);
+        while(!bits) {
+            dots = (dots + 1) % 4;
+            char searching[20] = "Searching WiFi \0\0\0\0";
+            for (int i = 0; i < dots; i ++) {
+                searching[i + (15/* "Searching WiFi ".length */)] = '.';
+            }
+            display_t disp = {
+                .title = searching,
+                .line1 = "WiFi config:",
+                .line2 = "SSID: "WIFI_SSID,
+                .line3 = "PASS: "WIFI_PASS,
+            };
+            updateDisplay(&disp);
+            bits = xEventGroupWaitBits(wifi_event_group, CONNECTED_BIT, false, true, 1000 / portTICK_PERIOD_MS);
+        }
         LOGI(TAG, "Connected to AP");
 
-        while(1) {            
-            SLEEP(100);
-            esp_timer_create_args_t args = {
-                .dispatch_method = ESP_TIMER_TASK,
-                .callback = pulseGuidingFinished
-            };
-            if (esp_timer_create(&args, &pulseGuidingTimer) != ESP_OK) {
-                LOGI(TAG, "Failed to create pulse guiding timers");
-                continue;
-            }
-            
-            ledc_channel_config(&ra_pmw_channel);
-            ledc_timer_config(&ra_pmw_timer);
+        connected = true;
 
-            ledc_channel_config(&dec_pmw_channel);
-            ledc_timer_config(&dec_pmw_timer);
-            
-            gpio_pad_select_gpio(GPIO_RA_DIR);
-            gpio_set_direction(GPIO_RA_DIR, GPIO_MODE_OUTPUT);
-            gpio_set_level(GPIO_RA_DIR, 1);
+        char ipstr[] = "Addr: 255.255.255.255";
+        char portstr[] = "Port: 12345";
+        sprintf(ipstr, "Addr: %s", my_ip);
+        sprintf(portstr, "Port: %d", UDP_PORT);
+        display_t disp = {
+            .title = "Staring Server",
+            .line1 = "Listening on:",
+            .line2 = ipstr,
+            .line3 = portstr,
+        };
+        updateDisplay(&disp);
+        SLEEP(1000);
 
-            gpio_pad_select_gpio(GPIO_RA_EN);
-            gpio_set_direction(GPIO_RA_EN, GPIO_MODE_OUTPUT);
-            gpio_set_level(GPIO_RA_EN, 1);
-
-            gpio_pad_select_gpio(GPIO_DEC_DIR);
-            gpio_set_direction(GPIO_DEC_DIR, GPIO_MODE_OUTPUT);
-            gpio_set_level(GPIO_DEC_DIR, 1);
-
-            gpio_pad_select_gpio(GPIO_DEC_EN);
-            gpio_set_direction(GPIO_DEC_EN, GPIO_MODE_OUTPUT);
-            gpio_set_level(GPIO_DEC_EN, 1);
-
-            udp_server(NULL);
+        esp_timer_create_args_t args = {
+            .dispatch_method = ESP_TIMER_TASK,
+            .callback = pulseGuidingFinished
+        };
+        if (esp_timer_create(&args, &pulseGuidingTimer) != ESP_OK) {
+            LOGI(TAG, "Failed to create pulse guiding timers");
+            continue;
         }
+        
+        ledc_channel_config(&ra_pmw_channel);
+        ledc_timer_config(&ra_pmw_timer);
+
+        ledc_channel_config(&dec_pmw_channel);
+        ledc_timer_config(&dec_pmw_timer);
+
+        udp_server(NULL);
+        
     }
 
     vTaskDelete(NULL);
@@ -420,13 +511,30 @@ static esp_err_t wifi_event_handler(void *ctx, system_event_t *event)
         esp_wifi_connect();
         break;
     case SYSTEM_EVENT_STA_GOT_IP:
+        sprintf(my_ip, "%s", inet_ntoa(event->event_info.got_ip.ip_info.ip));
+        sprintf(my_ip_port, "%s:%d", my_ip, UDP_PORT);
         xEventGroupSetBits(wifi_event_group, CONNECTED_BIT);
         break;
     case SYSTEM_EVENT_STA_DISCONNECTED:
-        /* This is a workaround as ESP32 WiFi libs don't currently
-           auto-reassociate. */
-        esp_wifi_connect();
-        xEventGroupClearBits(wifi_event_group, CONNECTED_BIT);
+        if (!connected) {
+            esp_wifi_connect();
+            xEventGroupClearBits(wifi_event_group, CONNECTED_BIT);
+        } else {
+            for (int i = 3; i > 0; i --) {
+                char buf[20];
+                sprintf(buf, "Restart in %d sec", i);
+                LOGE(TAG, "WiFi disconnected, %s", buf);
+                display_t disp = {
+                    .title = "WiFi Disconnected",
+                    .line1 = buf,
+                    .line2 = "",
+                    .line3 = "",
+                };
+                updateDisplay(&disp);
+                SLEEP(1000);
+            }
+            esp_restart();        
+        }
         break;
     default:
         break;
@@ -455,9 +563,28 @@ static void wifi_conn_init(void)
 
 void app_main(void)
 {
+    LOGI("BOOT", "stepper_gpio_init");
+    stepper_gpio_init();
+    LOGI("BOOT", "esp_timer_init");
     esp_timer_init();
+    LOGI("BOOT", "nvs_flash_init");
     ESP_ERROR_CHECK(nvs_flash_init());
+    LOGI("BOOT", "ssd1306_init");
+    if (!ssd1306_init(0, 19, 22)) {
+        LOGE(TAG, "Cannot init display, restart after 1 second");
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        esp_restart();
+    }
+    display_t disp = {
+        .title = "Searching WiFi",
+        .line1 = "WiFi config:",
+        .line2 = "SSID: "WIFI_SSID,
+        .line3 = "PASS: "WIFI_PASS,
+    };
+    LOGI("BOOT", "updateDisplay");
+    updateDisplay(&disp);
+    LOGI("BOOT", "wifi_conn_init");
     wifi_conn_init();
-
-    xTaskCreate(wait_wifi, TAG, 2048, NULL, 5, NULL);
+    LOGI("BOOT", "xTaskCreate wait_wifi");
+    xTaskCreate(wait_wifi, TAG, 4096, NULL, 5, NULL);
 }

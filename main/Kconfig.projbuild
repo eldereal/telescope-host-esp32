@@ -13,6 +13,16 @@ config SERVER_PORT
 	range 1 65535
 	default 9333
 
+config DISPLAY_SCL
+	int "Display OLED SCL pin"
+	range 0 34
+	default 19
+
+config DISPLAY_SDA
+	int "Display OLED SDA pin"
+	range 0 34
+	default 22
+
 config GPIO_RA_EN
     int "R.A. Motor EN pin"
 	range 0 34
