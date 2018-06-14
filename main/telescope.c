@@ -36,10 +36,10 @@ const static char *TAG = "Telescope";
 #define LEN(arr) (sizeof(arr) / sizeof(arr[0]))
 #define DUTY_RES LEDC_TIMER_13_BIT
 #define DUTY (((1 << DUTY_RES) - 1) / 2)
-// #define LOGI(tag, format, ...) ESP_LOGI(tag, "[%lld] "format, esp_timer_get_time(), ##__VA_ARGS__)
-// #define LOGE(tag, format, ...) ESP_LOGE(tag, "[%lld] "format, esp_timer_get_time(), ##__VA_ARGS__)
-#define LOGI(tag, format, ...)
-#define LOGE(tag, format, ...)
+#define LOGI(tag, format, ...) ESP_LOGI(tag, "[%lld] "format, esp_timer_get_time(), ##__VA_ARGS__)
+#define LOGE(tag, format, ...) ESP_LOGE(tag, "[%lld] "format, esp_timer_get_time(), ##__VA_ARGS__)
+// #define LOGI(tag, format, ...)
+// #define LOGE(tag, format, ...)
 /* ------ configs ---------- */
 #define WIFI_SSID   CONFIG_WIFI_SSID
 #define WIFI_PASS   CONFIG_WIFI_PASS
@@ -117,6 +117,8 @@ int8_t tracking = 0;
 char pulseGuiding = 0;
 int raSpeed = 0, decSpeed = 0, raGuideSpeed = 7500, decGuideSpeed = 7500;
 
+char *my_ip = NULL;
+char *my_ip_port = NULL;
 void updateStepper() {
     double raCyclesPerSiderealDay = raSpeed / 15000.0;
     double decCyclesPerDay = decSpeed / 15000.0;
@@ -389,6 +391,32 @@ void stepper_gpio_init(){
     gpio_set_level(GPIO_DEC_EN, 1);
 }
 
+esp_timer_handle_t autoDiscoverTimer;
+int brdcFd = -1;
+struct sockaddr_in theirAddr;
+
+void autoDiscoverTick(void* args) {
+    if (brdcFd == -1) {
+        brdcFd = socket(PF_INET, SOCK_DGRAM, 0);
+        if (brdcFd == -1) {
+            LOGE(TAG, "autoDiscoverTick socket fail: %d", errno);
+            SLEEP(1000);
+            esp_restart();
+        }
+        int optval = 1;//这个值一定要设置，否则可能导致sendto()失败  
+        setsockopt(brdcFd, SOL_SOCKET, SO_BROADCAST | SO_REUSEADDR, &optval, sizeof(int));
+        memset(&theirAddr, 0, sizeof(struct sockaddr_in));  
+        theirAddr.sin_family = AF_INET;
+        theirAddr.sin_addr.s_addr = inet_addr("255.255.255.255");  
+        theirAddr.sin_port = htons(9334);
+    }
+
+    int sendBytes;  
+    sendBytes = sendto(brdcFd, my_ip_port, strlen(my_ip_port), 0,  
+            (struct sockaddr *)&theirAddr, sizeof(struct sockaddr));
+    LOGI(TAG, "msg=%s, msgLen=%d, sendBytes=%d", my_ip_port, strlen(my_ip_port), sendBytes);  
+}
+
 static void wait_wifi(void *p)
 {
     while (1) {
@@ -409,8 +437,20 @@ static void wait_wifi(void *p)
         };
         if (esp_timer_create(&args, &pulseGuidingTimer) != ESP_OK) {
             LOGI(TAG, "Failed to create pulse guiding timers");
-            continue;
+            SLEEP(1000);
+            esp_restart();
         }
+
+        esp_timer_create_args_t argsAutoDiscover = {
+            .dispatch_method = ESP_TIMER_TASK,
+            .callback = autoDiscoverTick
+        };
+        if (esp_timer_create(&argsAutoDiscover, &autoDiscoverTimer) != ESP_OK) {
+            LOGI(TAG, "Failed to create auto discover timers");
+            SLEEP(1000);
+            esp_restart();
+        }
+        esp_timer_start_periodic(autoDiscoverTimer, 1000 * 1000);
         
         ledc_channel_config(&ra_pmw_channel);
         ledc_timer_config(&ra_pmw_timer);
@@ -419,7 +459,6 @@ static void wait_wifi(void *p)
         ledc_timer_config(&dec_pmw_timer);
 
         udp_server(NULL);
-        
     }
 
     vTaskDelete(NULL);
@@ -432,6 +471,14 @@ static esp_err_t wifi_event_handler(void *ctx, system_event_t *event)
         esp_wifi_connect();
         break;
     case SYSTEM_EVENT_STA_GOT_IP:
+        if (my_ip == NULL) {
+            my_ip = malloc(32);
+        }
+        if (my_ip_port == NULL) {
+            my_ip_port = malloc(32);
+        }
+        sprintf(my_ip, "%s", inet_ntoa(event->event_info.got_ip.ip_info.ip));
+        sprintf(my_ip_port, "%s:%d", my_ip, UDP_PORT);
         xEventGroupSetBits(wifi_event_group, CONNECTED_BIT);
         break;
     case SYSTEM_EVENT_STA_DISCONNECTED:
