@@ -31,6 +31,7 @@
 #include "ssd1306.h"
 #include "stdlib.h"
 #include "string.h"
+#include "esp_log.h"
 
 
 /**
@@ -118,11 +119,14 @@ oled_i2c_ctx *_ctxs[2] = { NULL };
 
 bool ssd1306_init(uint8_t id,uint8_t scl_pin, uint8_t sda_pin)
 {
+    ESP_LOGI("ssd1306", "ssd1306_init(%d, %d, %d)", id, scl_pin, sda_pin);
 	i2c_init(scl_pin,sda_pin);
     oled_i2c_ctx *ctx = NULL;
 
-    if ((id != 0) && (id != 1))
+    if ((id != 0) && (id != 1)) {
+        ESP_LOGE("ssd1306", "oled_init_fail at %d", __LINE__);
         goto oled_init_fail;
+    }
 
     // free old context (if any)
     ssd1306_term(id);
@@ -132,6 +136,7 @@ bool ssd1306_init(uint8_t id,uint8_t scl_pin, uint8_t sda_pin)
     if (ctx == NULL)
     {
 //        dmsg_err_puts("Alloc OLED context failed.");
+        ESP_LOGE("ssd1306", "oled_init_fail at %d", __LINE__);
         goto oled_init_fail;
     }
     if (id == 0)
@@ -154,6 +159,7 @@ bool ssd1306_init(uint8_t id,uint8_t scl_pin, uint8_t sda_pin)
         if (ctx->buffer == NULL)
         {
 //            dmsg_err_puts("Alloc OLED buffer failed.");
+            ESP_LOGE("ssd1306", "oled_init_fail at %d", __LINE__);
             goto oled_init_fail;
         }
         ctx->address = PANEL0_ADDR;
@@ -167,6 +173,7 @@ bool ssd1306_init(uint8_t id,uint8_t scl_pin, uint8_t sda_pin)
   #endif
 #else
         dmsg_err_puts("Panel 0 not defined.");
+        ESP_LOGE("ssd1306", "oled_init_fail at %d", __LINE__);
         goto oled_init_fail;
 #endif
     }
@@ -190,6 +197,7 @@ bool ssd1306_init(uint8_t id,uint8_t scl_pin, uint8_t sda_pin)
         if (ctx->buffer == NULL)
         {
 //            dmsg_err_puts("Alloc OLED buffer failed.");
+            ESP_LOGE("ssd1306", "oled_init_fail at %d", __LINE__);
             goto oled_init_fail;
         }
         ctx->address = PANEL1_ADDR;
@@ -203,6 +211,7 @@ bool ssd1306_init(uint8_t id,uint8_t scl_pin, uint8_t sda_pin)
   #endif
 #else
         dmsg_err_puts("Panel 1 not defined.");
+        ESP_LOGE("ssd1306", "oled_init_fail at %d", __LINE__);
         goto oled_init_fail;
 #endif
     }
@@ -214,6 +223,7 @@ bool ssd1306_init(uint8_t id,uint8_t scl_pin, uint8_t sda_pin)
     {
         i2c_stop();
 //        dmsg_err_puts("OLED I2C bus not responding.");
+        ESP_LOGE("ssd1306", "oled_init_fail at %d", __LINE__);
         goto oled_init_fail;
     }
     i2c_stop();
@@ -283,7 +293,7 @@ bool ssd1306_init(uint8_t id,uint8_t scl_pin, uint8_t sda_pin)
     ssd1306_refresh(id, true);
 
     _command(ctx->address, 0xaf); // SSD1306_DISPLAYON
-
+    ESP_LOGE("ssd1306", "oled init success");
     return true;
 
 oled_init_fail:
