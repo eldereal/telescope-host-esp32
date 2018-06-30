@@ -293,7 +293,6 @@ bool ssd1306_init(uint8_t id,uint8_t scl_pin, uint8_t sda_pin)
     ssd1306_refresh(id, true);
 
     _command(ctx->address, 0xaf); // SSD1306_DISPLAYON
-    ESP_LOGE("ssd1306", "oled init success");
     return true;
 
 oled_init_fail:

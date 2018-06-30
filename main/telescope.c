@@ -17,14 +17,18 @@
 #include "lwip/sys.h"
 #include <lwip/netdb.h>
 
+#include "util.h"
 #include "ssd1306.h"
 #include "fonts.h"
+
+#include "astro.h"
+#include "mount_encoder.h"
+
+#include "protocol.h"
 
 const static char *TAG = "Telescope";
 
 /* ------ consts ---------- */
-#define SIDEREAL_DAY_SECONDS 86164.1
-#define DAY_SECONDS 86400.0
 #define RA_CYCLE_MAX 30
 #define RA_CYCLE_MIN 0.01
 #define DEC_CYCLE_MAX 30
@@ -33,14 +37,14 @@ const static char *TAG = "Telescope";
 #define RA_SPEED_MIN 150
 #define DEC_SPEED_MAX 450000
 #define DEC_SPEED_MIN 150
+// #define RA_BACKLASH_TICKS 23
+// #define DEC_BACKLASH_TICKS 21
+// #define RA_TICKS_PER_CYCLE 312000
+// #define DEC_TICKS_PER_CYCLE 156000
 
 /* ------ utils ----------- */
-#define SLEEP(ms) vTaskDelay(ms / portTICK_PERIOD_MS)
-#define LEN(arr) (sizeof(arr) / sizeof(arr[0]))
 #define DUTY_RES LEDC_TIMER_13_BIT
 #define DUTY (((1 << DUTY_RES) - 1) / 2)
-#define LOGI(tag, format, ...) ESP_LOGI(tag, "[%lld] "format, esp_timer_get_time(), ##__VA_ARGS__)
-#define LOGE(tag, format, ...) ESP_LOGE(tag, "[%lld] "format, esp_timer_get_time(), ##__VA_ARGS__)
 // #define LOGI(tag, format, ...)
 // #define LOGE(tag, format, ...)
 /* ------ configs ---------- */
@@ -56,21 +60,29 @@ const static char *TAG = "Telescope";
 #define GPIO_RA_DIR (CONFIG_GPIO_RA_DIR)
 #define GPIO_RA_PUL (CONFIG_GPIO_RA_PUL)
 
-#define RA_GEAR_RATIO (CONFIG_RA_GEAR_RATIO)
-#define RA_RESOLUTION (CONFIG_RA_RESOLUTION)
-#define RA_CYCLE_STEPS (CONFIG_RA_CYCLE_STEPS)
+#define RA_GEAR_RATIO ((double)(CONFIG_RA_GEAR_RATIO))
+#define RA_RESOLUTION ((double)(CONFIG_RA_RESOLUTION))
+#define RA_CYCLE_STEPS ((double)(CONFIG_RA_CYCLE_STEPS))
 
 #define GPIO_DEC_EN  (CONFIG_GPIO_DEC_EN)
 #define GPIO_DEC_DIR (CONFIG_GPIO_DEC_DIR)
 #define GPIO_DEC_PUL (CONFIG_GPIO_DEC_PUL)
 
-#define DEC_GEAR_RATIO (CONFIG_DEC_GEAR_RATIO)
-#define DEC_RESOLUTION (CONFIG_DEC_RESOLUTION)
-#define DEC_CYCLE_STEPS (CONFIG_DEC_CYCLE_STEPS)
+#define DEC_GEAR_RATIO ((double)(CONFIG_DEC_GEAR_RATIO))
+#define DEC_RESOLUTION ((double)(CONFIG_DEC_RESOLUTION))
+#define DEC_CYCLE_STEPS ((double)(CONFIG_DEC_CYCLE_STEPS))
+
+#ifndef CONFIG_RA_REVERSE
+#define CONFIG_RA_REVERSE false
+#endif
+
+#ifndef CONFIG_DEC_REVERSE
+#define CONFIG_DEC_REVERSE false
+#endif
 
 /* ---------- FREQS ---------- */
-#define RA_FREQ(cyclesPerSiderealDay) ((int)(RA_CYCLE_STEPS * RA_GEAR_RATIO * RA_RESOLUTION * cyclesPerSiderealDay / SIDEREAL_DAY_SECONDS))
-#define DEC_FREQ(cyclesPerDay) ((int)(DEC_CYCLE_STEPS * DEC_GEAR_RATIO * DEC_RESOLUTION * cyclesPerDay / DAY_SECONDS))
+#define RA_FREQ(cyclesPerSiderealDay) ((int)(RA_CYCLE_STEPS * RA_GEAR_RATIO * RA_RESOLUTION * (cyclesPerSiderealDay) * 1000 / SIDEREAL_DAY_MILLIS))
+#define DEC_FREQ(cyclesPerDay) ((int)(DEC_CYCLE_STEPS * DEC_GEAR_RATIO * DEC_RESOLUTION * (cyclesPerDay) * 1000 / DAY_MILLIS))
 
 #define CMD_PING 0
 #define CMD_SET_TRACKING 1
@@ -79,6 +91,7 @@ const static char *TAG = "Telescope";
 #define CMD_PULSE_GUIDING 4
 #define CMD_SET_RA_GUIDE_SPEED 5
 #define CMD_SET_DEC_GUIDE_SPEED 6
+#define CMD_SYNC_TO_TARGET 7
 
 #define PULSE_GUIDING_NONE 0
 #define PULSE_GUIDING_DIR_WEST 4
@@ -144,7 +157,9 @@ char pulseGuiding = 0;
 int raSpeed = 0, decSpeed = 0, raGuideSpeed = 7500, decGuideSpeed = 7500;
 
 char my_ip[] = "255.255.255.255";
+uint32_t my_ip_num;
 char my_ip_port[] = "255.255.255.255:12345";
+uint16_t my_ip_port_num;
 char stepper_line1[] = "R.A. +00.0000 r/d";
 char stepper_line2[] = "Dec  +00.0000 r/d";
 char stepper_line3[] = "GUIDING/N  TRACKING/N";
@@ -198,9 +213,17 @@ void updateStepper() {
 
     if (raCyclesPerSiderealDay < 0) {
         raCyclesPerSiderealDay = -raCyclesPerSiderealDay;
-        gpio_set_level(GPIO_RA_DIR, 0);
+        if (CONFIG_RA_REVERSE) {
+            gpio_set_level(GPIO_RA_DIR, 1);
+        } else {
+            gpio_set_level(GPIO_RA_DIR, 0);
+        }        
     } else {
-        gpio_set_level(GPIO_RA_DIR, 1);
+        if (CONFIG_RA_REVERSE) {
+            gpio_set_level(GPIO_RA_DIR, 0);
+        } else {
+            gpio_set_level(GPIO_RA_DIR, 1);
+        }
     }
 
     int rafreq = RA_FREQ(raCyclesPerSiderealDay);
@@ -220,9 +243,17 @@ void updateStepper() {
 
     if (decCyclesPerDay < 0) {
         decCyclesPerDay = -decCyclesPerDay;
-        gpio_set_level(GPIO_DEC_DIR, 0);
+        if (CONFIG_DEC_REVERSE) {
+            gpio_set_level(GPIO_DEC_DIR, 1);
+        } else {
+            gpio_set_level(GPIO_DEC_DIR, 0);
+        } 
     } else {
-        gpio_set_level(GPIO_DEC_DIR, 1);
+        if (CONFIG_DEC_REVERSE) {
+            gpio_set_level(GPIO_DEC_DIR, 0);
+        } else {
+            gpio_set_level(GPIO_DEC_DIR, 1);
+        } 
     }
 
 
@@ -364,6 +395,15 @@ int parse_command(char* buf, unsigned int len, int fromSocket, struct sockaddr_i
             updateStepper();
             LOGI(TAG, "setDecGuideSpeed: %f", decGuideSpeed / 1000.0);
         } break;
+        case CMD_SYNC_TO_TARGET: {
+            if (len != 9) return 0;
+            int* raMillisPtr = (int*)(buf + 1);
+            int* decMillisPtr = (int*)(buf + 5);
+            int raMillis = ntohl(*raMillisPtr);
+            int decMillis = ntohl(*decMillisPtr);
+            set_angles(raMillis, decMillis);
+            LOGI(TAG, "syncTo: %d, %d", raMillis, decMillis);
+        }break;
         default:
         LOGI(TAG, "Unknown command: %d", *buf);
         return 0;
@@ -446,29 +486,49 @@ void stepper_gpio_init(){
 }
 
 esp_timer_handle_t autoDiscoverTimer;
+
+#define brdcPorts (CONFIG_SERVER_BROADCAST_PORT_LENGTH)
 int brdcFd = -1;
-struct sockaddr_in theirAddr;
+struct sockaddr_in theirAddr[brdcPorts];
 
 void autoDiscoverTick(void* args) {
     if (brdcFd == -1) {
         brdcFd = socket(PF_INET, SOCK_DGRAM, 0);
-        if (brdcFd == -1) {
-            LOGE(TAG, "autoDiscoverTick socket fail: %d", errno);
+            if (brdcFd == -1) {
+            LOGE(TAG, "autoDiscover socket fail: %d", errno);
             SLEEP(1000);
             esp_restart();
         }
         int optval = 1;//这个值一定要设置，否则可能导致sendto()失败  
         setsockopt(brdcFd, SOL_SOCKET, SO_BROADCAST | SO_REUSEADDR, &optval, sizeof(int));
-        memset(&theirAddr, 0, sizeof(struct sockaddr_in));  
-        theirAddr.sin_family = AF_INET;
-        theirAddr.sin_addr.s_addr = inet_addr("255.255.255.255");  
-        theirAddr.sin_port = htons(9334);
+        for (int i = 0; i < brdcPorts; i ++) {
+            memset(&theirAddr[i], 0, sizeof(struct sockaddr_in));  
+            theirAddr[i].sin_family = AF_INET;
+            theirAddr[i].sin_addr.s_addr = inet_addr("255.255.255.255");  
+            theirAddr[i].sin_port = htons(CONFIG_SERVER_BROADCAST_PORT_START + i);                  
+        }
     }
-
-    int sendBytes;  
-    sendBytes = sendto(brdcFd, my_ip_port, strlen(my_ip_port), 0,  
-            (struct sockaddr *)&theirAddr, sizeof(struct sockaddr));
-    LOGI(TAG, "msg=%s, msgLen=%d, sendBytes=%d", my_ip_port, strlen(my_ip_port), sendBytes);  
+    
+    broadcast_t data;
+    set_broadcast_fields(&data, my_ip_num, UDP_PORT, get_ra_angle_millis(), get_dec_angle_millis());
+    
+    for (int i = 0; i < brdcPorts; i ++) {
+        sendto(brdcFd, data.buffer, data.size, 0, (struct sockaddr *)&(theirAddr[i]), sizeof(struct sockaddr));
+    }
+    // int32_t ra_actual_pulses = get_ra_pulses();
+    // uint64_t millis = currentTimeMillis();
+    // int32_t ra_moved_millis =  SIDEREAL_DAY_MILLIS * ra_actual_pulses / (CONFIG_GPIO_RA_RENCODER_PULSES * CONFIG_RA_GEAR_RATIO);
+    // LOGI(TAG, "(%d) / (%d) = (%d)", SIDEREAL_DAY_MILLIS * ra_actual_pulses, CONFIG_GPIO_RA_RENCODER_PULSES * CONFIG_RA_GEAR_RATIO, ra_moved_millis);
+    LOGI(TAG, "RA: %d %s %d %d --- DEC: %d %s %d %d",
+        get_ra_angle_millis(),
+        get_ra_direction() ? "+" : "-",
+        get_ra_pulses_raw(),
+        get_ra_pulses(),
+        get_dec_angle_millis(),
+        get_dec_direction() ? "+" : "-",
+        get_dec_pulses_raw(),
+        get_dec_pulses()
+    );
 }
 
 static void wait_wifi(void *p)
@@ -539,6 +599,7 @@ static esp_err_t wifi_event_handler(void *ctx, system_event_t *event)
         break;
     case SYSTEM_EVENT_STA_GOT_IP:
         sprintf(my_ip, "%s", inet_ntoa(event->event_info.got_ip.ip_info.ip));
+        my_ip_num = ntohl(event->event_info.got_ip.ip_info.ip.addr);
         sprintf(my_ip_port, "%s:%d", my_ip, UDP_PORT);
         xEventGroupSetBits(wifi_event_group, CONNECTED_BIT);
         break;
@@ -590,19 +651,29 @@ static void wifi_conn_init(void)
 
 void app_main(void)
 {
-    LOGI("BOOT", "stepper_gpio_init");
-    stepper_gpio_init();
+    LOGI("BOOT", "App main");
     LOGI("BOOT", "esp_timer_init");
-    esp_timer_init();
+    ESP_ERROR_CHECK_ALLOW_INVALID_STATE(esp_timer_init());
+    LOGI("BOOT", "stepper_gpio_init");
+    stepper_gpio_init();    
     LOGI("BOOT", "nvs_flash_init");
     ESP_ERROR_CHECK(nvs_flash_init());
+    LOGI("BOOT", "mount_init");
+    init_mount();
     LOGI("BOOT", "ssd1306_init");
     if (ssd1306_init(0, CONFIG_DISPLAY_SCL, CONFIG_DISPLAY_SDA)) {
-        LOGE(TAG, "Display inited");
+        LOGI(TAG, "Display inited");
         displayEnabled = true;
     } else {
-        LOGE(TAG, "Cannot init display");
-        displayEnabled = false;
+        LOGE(TAG, "Cannot init display, try again in 1 sec");
+        SLEEP(1000);
+        if (ssd1306_init(0, CONFIG_DISPLAY_SCL, CONFIG_DISPLAY_SDA)) {
+            LOGI(TAG, "Display inited");
+            displayEnabled = true;
+        } else {
+            LOGE(TAG, "Cannot init display");
+            displayEnabled = false;
+        }
     }
     display_t disp = {
         .title = "Searching WiFi",
@@ -617,3 +688,11 @@ void app_main(void)
     LOGI("BOOT", "xTaskCreate wait_wifi");
     xTaskCreate(wait_wifi, TAG, 4096, NULL, 5, NULL);
 }
+
+
+
+
+
+
+
+

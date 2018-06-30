@@ -9,9 +9,19 @@ config WIFI_PASS
 	default ""
 
 config SERVER_PORT
-    int "Server port"
+    int "Command listening port"
 	range 1 65535
 	default 9333
+
+config SERVER_BROADCAST_PORT_START
+    int "Status broadcasting start port"
+	range 1 65535
+	default 9334
+
+config SERVER_BROADCAST_PORT_LENGTH
+    int "Status broadcasting port count"
+	range 1 16
+	default 4
 
 config DISPLAY_SCL
 	int "Display OLED SCL pin"
@@ -23,59 +33,118 @@ config DISPLAY_SDA
 	range 0 34
 	default 22
 
+menu "Right Ascension"
+
+config GPIO_RA_RENCODER_A
+    int "Rotatry encoder phase A"
+	range 0 34
+	default 0
+
+config GPIO_RA_RENCODER_B
+    int "Rotatry encoder phase B"
+	range 0 34
+	default 2
+
+config GPIO_RA_RENCODER_PULSES
+    int "Rotatry encoder pulses per cycle"
+	default 2400
+
+config RA_BACKLASH_PULSES
+    int "Axis backlash pulses in rotatry encoder"
+	default 23
+
 config GPIO_RA_EN
-    int "R.A. Motor EN pin"
+    int "Motor EN pin"
 	range 0 34
 	default 12
 
 config GPIO_RA_PUL
-    int "R.A. Motor PUL/STEP pin"
+    int "Motor PUL/STEP pin"
 	range 0 34
 	default 13
 
 config GPIO_RA_DIR
-    int "R.A. Motor DIR pin"
+    int "Motor DIR pin"
 	range 0 34
 	default 14
 
 config RA_RESOLUTION
-	int "R.A. Motor Resolution (pulses per step)"
+	int "Motor Resolution (pulses per step)"
 	default 16
 
 config RA_CYCLE_STEPS
-	int "R.A Motor Steps per Cycle"
+	int "Motor Steps per Cycle"
 	default 5760
 
 config RA_GEAR_RATIO
-	int "R.A. Axis Gear Ratio (slow down > 1)"
+	int "Axis Gear Ratio (slow down > 1)"
 	default 130
 
+config RA_REVERSE
+	bool "Reverse Motor"
+	default false
+
+config RA_REVERSE_RENCODER
+	bool "Reverse Rotatry Encoder"
+	default false
+
+endmenu
+
+menu "Declination"
+
+config GPIO_DEC_RENCODER_A
+    int "Rotatry encoder phase A"
+	range 0 34
+	default 16
+
+config GPIO_DEC_RENCODER_B
+    int "Rotatry encoder phase B"
+	range 0 34
+	default 17
+
+config GPIO_DEC_RENCODER_PULSES
+    int "Rotatry encoder pulses per cycle"
+	default 2400
+
+config DEC_BACKLASH_PULSES
+    int "Axis backlash pulses in rotatry encoder"
+	default 21
 
 config GPIO_DEC_EN
-    int "Dec Motor EN pin"
+    int "Motor EN pin"
 	range 0 34
 	default 12
 
 config GPIO_DEC_PUL
-    int "Dec Motor PUL/STEP pin"
+    int "Motor PUL/STEP pin"
 	range 0 34
 	default 13
 
 config GPIO_DEC_DIR
-    int "Dec Motor DIR pin"
+    int "Motor DIR pin"
 	range 0 34
 	default 14
 
 config DEC_RESOLUTION
-	int "Dec Motor Resolution (pulses per step)"
+	int "Motor Resolution (pulses per step)"
 	default 16
 
 config DEC_CYCLE_STEPS
-	int "Dec Motor Steps per Cycle"
+	int "Motor Steps per Cycle"
 	default 5760
 
 config DEC_GEAR_RATIO
-	int "Dec Axis Gear ratio (slow down > 1)"
+	int "Axis Gear ratio (slow down > 1)"
 	default 130	
+
+config DEC_REVERSE
+	bool "Reverse Motor"
+	default false
+
+config DEC_REVERSE_RENCODER
+	bool "Reverse Rotatry Encoder"
+	default false
+
+endmenu
 
 endmenu
