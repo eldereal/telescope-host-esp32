@@ -24,6 +24,9 @@ void interrupt(rencoder_t* self, gpio_num_t gpio) {
     if(self->working) {
         if (gpio == self->a && gpio_get_level(self->a)) {
             bool dir = gpio_get_level(self->b);
+            if (self->reverse) {
+                dir = !dir;
+            }
             if (dir != self->direction && self->direction_callback != NULL) {
                 self->direction_callback(self, dir, self->direction_callback_args);
             }
@@ -45,8 +48,9 @@ void interrupt(rencoder_t* self, gpio_num_t gpio) {
     }
 }
 
-esp_err_t rencoder_start(rencoder_t *self, gpio_num_t a, gpio_num_t b, count_callback_f count_callback, direction_callback_f direction_callback) {
+esp_err_t rencoder_start(rencoder_t *self, gpio_num_t a, gpio_num_t b, count_callback_f count_callback, direction_callback_f direction_callback, bool reverse) {
     self -> direction = true;
+    self -> reverse = reverse;
     self -> a = a;
     self -> b = b;
     self -> count_callback = count_callback;

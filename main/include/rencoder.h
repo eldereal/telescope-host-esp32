@@ -13,6 +13,7 @@ typedef void (*direction_callback_f)(struct rencoder* target, bool next_directio
 typedef struct rencoder {
     gpio_num_t a, b;
     int32_t count;
+    bool reverse;
     bool direction;
     bool working;
     count_callback_f count_callback;
@@ -21,7 +22,7 @@ typedef struct rencoder {
     void *direction_callback_args;
 } rencoder_t;
 
-esp_err_t rencoder_start(rencoder_t *rencoder, gpio_num_t a, gpio_num_t b, count_callback_f count_callback, direction_callback_f direction_callback);
+esp_err_t rencoder_start(rencoder_t *rencoder, gpio_num_t a, gpio_num_t b, count_callback_f count_callback, direction_callback_f direction_callback, bool reverse);
 esp_err_t rencoder_stop(rencoder_t *rencoder);
 void rencoder_pause(rencoder_t *rencoder);
 void rencoder_clear(rencoder_t *rencoder);
