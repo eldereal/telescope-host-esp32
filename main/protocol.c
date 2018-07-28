@@ -5,17 +5,21 @@
 #define PORT(B) (*((uint16_t*)((B) + 4)))
 #define RA(B) (*((uint32_t*)((B) + 6)))
 #define DEC(B) (*((uint32_t*)((B) + 10)))
+#define SLEWING(B) (*((uint8_t*)((B) + 14)))
+#define SIZE 15
 
 void set_broadcast_fields(
     broadcast_t *target,
     uint32_t ip,
     uint16_t port,
     int32_t ra, //in millis
-    int32_t dec //in millis    
+    int32_t dec, //in millis
+    bool slewing 
 ) {
-    target -> size = 14;
+    target -> size = SIZE;
     IP(target->buffer) = htonl(ip);
     PORT(target->buffer) = htons(port);
     RA(target->buffer) = htonl(ra);
     DEC(target->buffer) = htonl(dec);
+    SLEWING(target->buffer) = slewing ? 1 : 0;
 }

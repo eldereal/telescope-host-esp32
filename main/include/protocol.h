@@ -13,7 +13,8 @@ void set_broadcast_fields(
     uint32_t ip,
     uint16_t port,
     int32_t ra, //in millis
-    int32_t dec //in millis    
+    int32_t dec, //in millis  
+    bool slewing 
 );
     // /* IP     */ *(uint32_t*)(buffer    )  = htonl(my_ip_num);
     // /* Port   */ *(uint16_t*)(buffer + 4)  = htons(UDP_PORT);

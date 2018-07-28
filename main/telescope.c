@@ -25,6 +25,7 @@
 #include "mount_encoder.h"
 
 #include "protocol.h"
+#include "slew.h"
 
 const static char *TAG = "Telescope";
 
@@ -92,6 +93,8 @@ const static char *TAG = "Telescope";
 #define CMD_SET_RA_GUIDE_SPEED 5
 #define CMD_SET_DEC_GUIDE_SPEED 6
 #define CMD_SYNC_TO_TARGET 7
+#define CMD_SLEW_TO_TARGET 8
+#define CMD_ABORT_SLEW 9
 
 #define PULSE_GUIDING_NONE 0
 #define PULSE_GUIDING_DIR_WEST 4
@@ -207,8 +210,15 @@ void updateStepper() {
     } else if (tracking < 0) {
         trackingstr = "T/W";
     }
-   
-    sprintf(stepper_line3, "%s               %s",guidingstr, trackingstr);
+    
+    if (!is_slewing()) {
+        sprintf(stepper_line3, "%s               %s",guidingstr, trackingstr);
+    } else {
+        sprintf(stepper_line3, "                     ");
+        int progress = (int)(get_slew_progress() * 100.0);
+        int timeToGo = get_slew_time_to_go_millis() / 1000;
+        sprintf(stepper_line3, "Slew %d%% eta %02d:%02d", progress, timeToGo / 60, timeToGo % 60);
+    }
     updateDisplay(&stepper_display);
 
     if (raCyclesPerSiderealDay < 0) {
@@ -273,6 +283,12 @@ void updateStepper() {
     }
 }
 
+void slewCallback(double raCyclesPerSiderealDay, double decCyclesPerDay) {
+    raSpeed = raCyclesPerSiderealDay * 15000.0;
+    decSpeed = decCyclesPerDay * 15000.0;
+    updateStepper();
+}
+
 char ackBuf[18];
 int8_t* ackTracking = (int8_t*)ackBuf;
 char* ackPulseGuiding = ackBuf + 1;
@@ -328,6 +344,7 @@ int parse_command(char* buf, unsigned int len, int fromSocket, struct sockaddr_i
         } break;
         case CMD_SET_TRACKING: {
             if (len != 2) return 0;
+            if (is_slewing()) return 0;
             int8_t* newTracking = (int8_t*)(buf + 1);
             tracking = *newTracking;
             updateStepper();
@@ -335,6 +352,7 @@ int parse_command(char* buf, unsigned int len, int fromSocket, struct sockaddr_i
         } break;
         case CMD_SET_RA_SPEED: {
             if (len != 5) return 0;
+            if (is_slewing()) return 0;
             int* newRaSpeed = (int*)(buf + 1);
             raSpeed = ntohl(*newRaSpeed);
             if (raSpeed > RA_SPEED_MAX) raSpeed = RA_SPEED_MAX;
@@ -347,6 +365,7 @@ int parse_command(char* buf, unsigned int len, int fromSocket, struct sockaddr_i
         } break;
         case CMD_SET_DEC_SPEED: {
             if (len != 5) return 0;
+            if (is_slewing()) return 0;
             int* newDecSpeed = (int*)(buf + 1);
             decSpeed = ntohl(*newDecSpeed);
             if (decSpeed > DEC_SPEED_MAX) decSpeed = DEC_SPEED_MAX;
@@ -359,6 +378,7 @@ int parse_command(char* buf, unsigned int len, int fromSocket, struct sockaddr_i
         } break;
         case CMD_PULSE_GUIDING: {
             if (len != 4) return 0;
+            if (is_slewing()) return 0;
             if (pulseGuiding) return 0;
             char* dir = (char*)(buf + 1);
             short* pulseLengthN = (short*)(buf + 2);
@@ -397,12 +417,28 @@ int parse_command(char* buf, unsigned int len, int fromSocket, struct sockaddr_i
         } break;
         case CMD_SYNC_TO_TARGET: {
             if (len != 9) return 0;
+            if (is_slewing()) return 0;
             int* raMillisPtr = (int*)(buf + 1);
             int* decMillisPtr = (int*)(buf + 5);
             int raMillis = ntohl(*raMillisPtr);
             int decMillis = ntohl(*decMillisPtr);
             set_angles(raMillis, decMillis);
             LOGI(TAG, "syncTo: %d, %d", raMillis, decMillis);
+        }break;
+        case CMD_SLEW_TO_TARGET: {
+            if (is_slewing()) return 0;
+            if (pulseGuiding) return 0;
+            int* raMillisPtr = (int*)(buf + 1);
+            int* decMillisPtr = (int*)(buf + 5);
+            int raMillis = ntohl(*raMillisPtr);
+            int decMillis = ntohl(*decMillisPtr);
+            slew_to_coordinates(raMillis, decMillis);
+            LOGI(TAG, "slewTo: %d, %d", raMillis, decMillis);
+        }break;
+        case CMD_ABORT_SLEW: {
+            if (!is_slewing()) return 0;
+            abort_slew();
+            LOGI(TAG, "abortSlew");
         }break;
         default:
         LOGI(TAG, "Unknown command: %d", *buf);
@@ -510,7 +546,13 @@ void autoDiscoverTick(void* args) {
     }
     
     broadcast_t data;
-    set_broadcast_fields(&data, my_ip_num, UDP_PORT, get_ra_angle_millis(), get_dec_angle_millis());
+    set_broadcast_fields(&data, 
+        my_ip_num,
+        UDP_PORT,
+        get_ra_angle_millis(),
+        get_dec_angle_millis(),
+        is_slewing()
+    );
     
     for (int i = 0; i < brdcPorts; i ++) {
         sendto(brdcFd, data.buffer, data.size, 0, (struct sockaddr *)&(theirAddr[i]), sizeof(struct sockaddr));
@@ -658,8 +700,10 @@ void app_main(void)
     stepper_gpio_init();    
     LOGI("BOOT", "nvs_flash_init");
     ESP_ERROR_CHECK(nvs_flash_init());
-    LOGI("BOOT", "mount_init");
+    LOGI("BOOT", "init_mount");
     init_mount();
+    LOGI("BOOT", "init_slew");
+    init_slew(slewCallback);
     LOGI("BOOT", "ssd1306_init");
     if (ssd1306_init(0, CONFIG_DISPLAY_SCL, CONFIG_DISPLAY_SDA)) {
         LOGI(TAG, "Display inited");
