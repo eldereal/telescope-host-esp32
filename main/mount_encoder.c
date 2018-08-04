@@ -3,6 +3,7 @@
 #include "sdkconfig.h"
 #include "rencoder.h"
 #include "astro.h"
+#include "telescope.h"
 
 uint64_t encoder_reset_time;
 int32_t reset_ra_angle_millis, reset_dec_angle_millis;
@@ -172,6 +173,10 @@ int32_t get_ra_angle_millis() {
 }
 
 int32_t get_dec_angle_millis() {
+    return decMecMillis2decMillis(get_dec_mechnical_angle_millis(), NULL);
+}
+
+int32_t get_dec_mechnical_angle_millis() {
     int32_t dec_moved_millis = (int32_t)(dec_pulse_ratio * dec_actual_pulses);
     return reset_dec_angle_millis + dec_moved_millis;
 }
@@ -180,7 +185,7 @@ void set_angles(int32_t ra_angle_day_millis, int32_t dec_angle_day_millis) {
     encoder_reset_time = currentTimeMillis();
     int32_t ra_angle_sidereal_millis = (int32_t)((double)ra_angle_day_millis / ra_time_ratio);
     reset_ra_angle_millis = ra_angle_sidereal_millis;
-    reset_dec_angle_millis = dec_angle_day_millis;
+    reset_dec_angle_millis = decMillis2decMecMillis(dec_angle_day_millis);
 
     ra_actual_pulses = 0;
     dec_actual_pulses = 0;

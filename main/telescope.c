@@ -95,6 +95,7 @@ const static char *TAG = "Telescope";
 #define CMD_SYNC_TO_TARGET 7
 #define CMD_SLEW_TO_TARGET 8
 #define CMD_ABORT_SLEW 9
+#define CMD_SET_SIDE_OF_PIER 10
 
 #define PULSE_GUIDING_NONE 0
 #define PULSE_GUIDING_DIR_WEST 4
@@ -158,6 +159,7 @@ void updateDisplay(display_t *content) {
 int8_t tracking = 0;
 char pulseGuiding = 0;
 int raSpeed = 0, decSpeed = 0, raGuideSpeed = 7500, decGuideSpeed = 7500;
+uint8_t sideOfPier = 0;
 
 char my_ip[] = "255.255.255.255";
 uint32_t my_ip_num;
@@ -440,6 +442,16 @@ int parse_command(char* buf, unsigned int len, int fromSocket, struct sockaddr_i
             abort_slew();
             LOGI(TAG, "abortSlew");
         }break;
+        case CMD_SET_SIDE_OF_PIER: {
+            if (len != 2) return 0;
+            if (is_slewing()) return 0;
+            int8_t* newSideOfPier = (int8_t*)(buf + 1);
+            sideOfPier = *newSideOfPier;
+            int32_t ra = get_ra_angle_millis();
+            int32_t dec = get_dec_angle_millis();
+            set_angles(ra, dec);
+            LOGI(TAG, "setSideOfPier: %s", sideOfPier ? "BeyondThePole/West" : "Normal/East");
+        }break;
         default:
         LOGI(TAG, "Unknown command: %d", *buf);
         return 0;
@@ -551,26 +563,16 @@ void autoDiscoverTick(void* args) {
         UDP_PORT,
         get_ra_angle_millis(),
         get_dec_angle_millis(),
-        is_slewing()
+        is_slewing(),
+        tracking,
+        raSpeed,
+        decSpeed,
+        sideOfPier
     );
     
     for (int i = 0; i < brdcPorts; i ++) {
-        sendto(brdcFd, data.buffer, data.size, 0, (struct sockaddr *)&(theirAddr[i]), sizeof(struct sockaddr));
-    }
-    // int32_t ra_actual_pulses = get_ra_pulses();
-    // uint64_t millis = currentTimeMillis();
-    // int32_t ra_moved_millis =  SIDEREAL_DAY_MILLIS * ra_actual_pulses / (CONFIG_GPIO_RA_RENCODER_PULSES * CONFIG_RA_GEAR_RATIO);
-    // LOGI(TAG, "(%d) / (%d) = (%d)", SIDEREAL_DAY_MILLIS * ra_actual_pulses, CONFIG_GPIO_RA_RENCODER_PULSES * CONFIG_RA_GEAR_RATIO, ra_moved_millis);
-    LOGI(TAG, "RA: %d %s %d %d --- DEC: %d %s %d %d",
-        get_ra_angle_millis(),
-        get_ra_direction() ? "+" : "-",
-        get_ra_pulses_raw(),
-        get_ra_pulses(),
-        get_dec_angle_millis(),
-        get_dec_direction() ? "+" : "-",
-        get_dec_pulses_raw(),
-        get_dec_pulses()
-    );
+        sendto(brdcFd, data.buffer, BROADCAST_SIZE, 0, (struct sockaddr *)&(theirAddr[i]), sizeof(struct sockaddr));
+    }    
 }
 
 static void wait_wifi(void *p)
@@ -733,7 +735,52 @@ void app_main(void)
     xTaskCreate(wait_wifi, TAG, 4096, NULL, 5, NULL);
 }
 
+uint8_t getSideOfPier() {
+    return sideOfPier;
+}
 
+
+/* 90  - 21600000 */
+/* 180 - 43200000 */
+/* 270 - 64800000 */
+/* 360 - 86400000 */
+int32_t decMillis2decMecMillis(int32_t decMillis) {
+    if (sideOfPier) {
+        return 43200000 - decMillis;
+    } else {
+        return decMillis;
+    }
+}
+
+int32_t decMecMillis2decMillis(int32_t decMecMillis, uint8_t* parseSideOfPier) {
+    while (decMecMillis < 0) {
+        decMecMillis += 86400000;
+    }
+    while (decMecMillis >= 86400000) {
+        decMecMillis -= 86400000;
+    }/* 0 - 360 */
+    if (decMecMillis < 21600000) {
+        if (parseSideOfPier) {
+            *parseSideOfPier = 0;
+        }    
+        return decMecMillis;
+    }
+    if (decMecMillis > 64800000) {
+        if (parseSideOfPier) {
+            *parseSideOfPier = 0;
+        }
+        return decMecMillis - 86400000;
+    }
+    /* 90 - 270 */
+    if (parseSideOfPier) {
+        *parseSideOfPier = 1;
+    }
+    return 43200000 - decMecMillis;
+}
+
+void setSideOfPierWithDecMecMillis(int32_t decMecMillis) {
+    decMecMillis2decMillis(decMecMillis, &sideOfPier);
+}
 
 
 

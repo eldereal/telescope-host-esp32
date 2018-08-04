@@ -4,6 +4,7 @@
 #include "math.h"
 #include "util.h"
 #include "astro.h"
+#include "telescope.h"
 
 #define TAG "SLEW"
 
@@ -54,7 +55,7 @@ int32_t getRaDiff(int32_t target, int32_t current) {
 
 void slew_timer_callback(void* _) {
     int32_t raDiff = getRaDiff(raTargetMillis, get_ra_angle_millis());
-    int32_t decDiff = decTargetMillis - get_dec_angle_millis();
+    int32_t decDiff = decTargetMillis - get_dec_mechnical_angle_millis();
     int32_t absRaDiff;
     int32_t raReverse;
     int32_t absDecDiff;
@@ -132,9 +133,9 @@ void abort_slew() {
 
 void slew_to_coordinates(int32_t raMillis, int32_t decMillis){
     raStartMillis = get_ra_angle_millis();
-    decStartMillis = get_dec_angle_millis();
+    decStartMillis = get_dec_mechnical_angle_millis();
     raTargetMillis = raMillis;
-    decTargetMillis = decMillis;
+    decTargetMillis = decMillis2decMecMillis(decMillis);
     distance = dist(getRaDiff(raTargetMillis, raStartMillis), decTargetMillis - decStartMillis);
     slewing = true;
     speed = MAX_SPEED;
