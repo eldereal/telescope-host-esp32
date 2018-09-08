@@ -3,7 +3,7 @@
 #include "freertos/task.h"
 #include "driver/gpio.h"
 #include "sdkconfig.h"
-#include "driver/ledc.h"
+
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_wifi.h"
@@ -26,28 +26,10 @@
 
 #include "protocol.h"
 #include "slew.h"
+#include "mount.h"
 
 const static char *TAG = "Telescope";
 
-/* ------ consts ---------- */
-#define RA_CYCLE_MAX 30
-#define RA_CYCLE_MIN 0.01
-#define DEC_CYCLE_MAX 30
-#define DEC_CYCLE_MIN 0.01
-#define RA_SPEED_MAX 450000
-#define RA_SPEED_MIN 150
-#define DEC_SPEED_MAX 450000
-#define DEC_SPEED_MIN 150
-// #define RA_BACKLASH_TICKS 23
-// #define DEC_BACKLASH_TICKS 21
-// #define RA_TICKS_PER_CYCLE 312000
-// #define DEC_TICKS_PER_CYCLE 156000
-
-/* ------ utils ----------- */
-#define DUTY_RES LEDC_TIMER_13_BIT
-#define DUTY (((1 << DUTY_RES) - 1) / 2)
-// #define LOGI(tag, format, ...)
-// #define LOGE(tag, format, ...)
 /* ------ configs ---------- */
 #define WIFI_SSID   CONFIG_WIFI_SSID
 #define WIFI_PASS   CONFIG_WIFI_PASS
@@ -56,34 +38,6 @@ const static char *TAG = "Telescope";
 
 #define DISPLAY_SCL (CONFIG_DISPLAY_SCL)
 #define DISPLAY_SDA (CONFIG_DISPLAY_SDA)
-
-#define GPIO_RA_EN  (CONFIG_GPIO_RA_EN)
-#define GPIO_RA_DIR (CONFIG_GPIO_RA_DIR)
-#define GPIO_RA_PUL (CONFIG_GPIO_RA_PUL)
-
-#define RA_GEAR_RATIO ((double)(CONFIG_RA_GEAR_RATIO))
-#define RA_RESOLUTION ((double)(CONFIG_RA_RESOLUTION))
-#define RA_CYCLE_STEPS ((double)(CONFIG_RA_CYCLE_STEPS))
-
-#define GPIO_DEC_EN  (CONFIG_GPIO_DEC_EN)
-#define GPIO_DEC_DIR (CONFIG_GPIO_DEC_DIR)
-#define GPIO_DEC_PUL (CONFIG_GPIO_DEC_PUL)
-
-#define DEC_GEAR_RATIO ((double)(CONFIG_DEC_GEAR_RATIO))
-#define DEC_RESOLUTION ((double)(CONFIG_DEC_RESOLUTION))
-#define DEC_CYCLE_STEPS ((double)(CONFIG_DEC_CYCLE_STEPS))
-
-#ifndef CONFIG_RA_REVERSE
-#define CONFIG_RA_REVERSE false
-#endif
-
-#ifndef CONFIG_DEC_REVERSE
-#define CONFIG_DEC_REVERSE false
-#endif
-
-/* ---------- FREQS ---------- */
-#define RA_FREQ(cyclesPerSiderealDay) ((int)(RA_CYCLE_STEPS * RA_GEAR_RATIO * RA_RESOLUTION * (cyclesPerSiderealDay) * 1000 / SIDEREAL_DAY_MILLIS))
-#define DEC_FREQ(cyclesPerDay) ((int)(DEC_CYCLE_STEPS * DEC_GEAR_RATIO * DEC_RESOLUTION * (cyclesPerDay) * 1000 / DAY_MILLIS))
 
 #define CMD_PING 0
 #define CMD_SET_TRACKING 1
@@ -96,6 +50,7 @@ const static char *TAG = "Telescope";
 #define CMD_SLEW_TO_TARGET 8
 #define CMD_ABORT_SLEW 9
 #define CMD_SET_SIDE_OF_PIER 10
+#define CMD_SET_TIME_RATIO 101
 
 #define PULSE_GUIDING_NONE 0
 #define PULSE_GUIDING_DIR_WEST 4
@@ -103,35 +58,6 @@ const static char *TAG = "Telescope";
 #define PULSE_GUIDING_DIR_NORTH 1
 #define PULSE_GUIDING_DIR_SOUTH 2
 
-ledc_channel_config_t ra_pmw_channel = {
-    .channel = LEDC_CHANNEL_0,
-    .timer_sel = LEDC_TIMER_0,
-    .duty = 0,
-    .gpio_num = GPIO_RA_PUL,
-    .speed_mode = LEDC_HIGH_SPEED_MODE,
-};
-
-ledc_timer_config_t ra_pmw_timer = {
-    .freq_hz = RA_FREQ(1),
-    .duty_resolution = DUTY_RES,
-    .speed_mode = LEDC_HIGH_SPEED_MODE,
-    .timer_num = LEDC_TIMER_0
-};
-
-ledc_channel_config_t dec_pmw_channel = {
-    .channel = LEDC_CHANNEL_1,
-    .timer_sel = LEDC_TIMER_1,
-    .duty = 0,
-    .gpio_num = GPIO_DEC_PUL,
-    .speed_mode = LEDC_HIGH_SPEED_MODE,
-};
-
-ledc_timer_config_t dec_pmw_timer = {
-    .freq_hz = DEC_FREQ(1),
-    .duty_resolution = DUTY_RES,
-    .speed_mode = LEDC_HIGH_SPEED_MODE,
-    .timer_num = LEDC_TIMER_1
-};
 
 typedef struct {
     char * title;
@@ -176,45 +102,64 @@ display_t stepper_display = {
     .line_font = 1
 };
 
-void updateStepper() {
+void calcRaAndDecCycles(double *outRaCyclesPerSiderealDay, double *outDecCyclesPerDay) {
     double raCyclesPerSiderealDay = raSpeed / 15000.0;
     double decCyclesPerDay = decSpeed / 15000.0;
-
-    char* guidingstr = "   ";
     switch (pulseGuiding) {
         case PULSE_GUIDING_DIR_NORTH:
-            guidingstr = "G/N";
             decCyclesPerDay += decGuideSpeed / 15000.0;
             break;
         case PULSE_GUIDING_DIR_SOUTH:
-            guidingstr = "G/S";
             decCyclesPerDay -= decGuideSpeed / 15000.0;
             break;
         case PULSE_GUIDING_DIR_WEST:
-            guidingstr = "G/W";
             raCyclesPerSiderealDay += raGuideSpeed / 15000.0;
             break;
         case PULSE_GUIDING_DIR_EAST:
-            guidingstr = "G/E";
             raCyclesPerSiderealDay -= raGuideSpeed / 15000.0;
             break;
     }
-
     if (tracking) {
         raCyclesPerSiderealDay += 1;
     }
+    *outRaCyclesPerSiderealDay = raCyclesPerSiderealDay;
+    *outDecCyclesPerDay = decCyclesPerDay;
+}
 
-    sprintf(stepper_line1, "R.A. %+8.4f r/d", raCyclesPerSiderealDay);
-    sprintf(stepper_line2, "Dec  %+8.4f r/d", decCyclesPerDay);
-    char* trackingstr = "   ";
-    if (tracking > 0) {
-        trackingstr = "T/N";
-    } else if (tracking < 0) {
-        trackingstr = "T/W";
-    }
-    
+void updateDisplayStatus(){
     if (!is_slewing()) {
-        sprintf(stepper_line3, "%s               %s",guidingstr, trackingstr);
+        double raCyclesPerSiderealDay;
+        double decCyclesPerDay;
+        calcRaAndDecCycles(&raCyclesPerSiderealDay, &decCyclesPerDay);
+        char* guidingstr = "   ";
+        switch (pulseGuiding) {
+            case PULSE_GUIDING_DIR_NORTH:
+                guidingstr = "G/N";
+                break;
+            case PULSE_GUIDING_DIR_SOUTH:
+                guidingstr = "G/S";
+                break;
+            case PULSE_GUIDING_DIR_WEST:
+                guidingstr = "G/W";
+                break;
+            case PULSE_GUIDING_DIR_EAST:
+                guidingstr = "G/E";
+                break;
+        }
+
+        char speedx[9];
+        speedx[8] = 0;
+        snprintf(speedx, 8, "x%1.4f", get_mount_time_ratio());
+
+        sprintf(stepper_line1, "R.A. %+8.4f r/d", raCyclesPerSiderealDay);
+        sprintf(stepper_line2, "Dec  %+8.4f r/d", decCyclesPerDay);
+        char* trackingstr = "   ";
+        if (tracking > 0) {
+            trackingstr = "T/N";
+        } else if (tracking < 0) {
+            trackingstr = "T/W";
+        }
+        sprintf(stepper_line3, "%s   %s    %s",guidingstr, speedx, trackingstr);
     } else {
         sprintf(stepper_line3, "                     ");
         int progress = (int)(get_slew_progress() * 100.0);
@@ -222,67 +167,17 @@ void updateStepper() {
         sprintf(stepper_line3, "Slew %d%% eta %02d:%02d", progress, timeToGo / 60, timeToGo % 60);
     }
     updateDisplay(&stepper_display);
+}
 
-    if (raCyclesPerSiderealDay < 0) {
-        raCyclesPerSiderealDay = -raCyclesPerSiderealDay;
-        if (CONFIG_RA_REVERSE) {
-            gpio_set_level(GPIO_RA_DIR, 1);
-        } else {
-            gpio_set_level(GPIO_RA_DIR, 0);
-        }        
-    } else {
-        if (CONFIG_RA_REVERSE) {
-            gpio_set_level(GPIO_RA_DIR, 0);
-        } else {
-            gpio_set_level(GPIO_RA_DIR, 1);
-        }
-    }
+void updateStepper() {
+    double raCyclesPerSiderealDay;
+    double decCyclesPerDay;
+    calcRaAndDecCycles(&raCyclesPerSiderealDay, &decCyclesPerDay);
 
-    int rafreq = RA_FREQ(raCyclesPerSiderealDay);
-    if (raCyclesPerSiderealDay < RA_CYCLE_MIN || rafreq == 0) {
-        LOGI(TAG, "RA Stop");
-        ledc_set_duty(LEDC_HIGH_SPEED_MODE, ra_pmw_channel.channel, 0);
-        ledc_update_duty(LEDC_HIGH_SPEED_MODE, ra_pmw_channel.channel);
-        gpio_set_level(GPIO_RA_EN, 1);
-    } else {
-        if (raCyclesPerSiderealDay > RA_CYCLE_MAX) raCyclesPerSiderealDay = RA_CYCLE_MAX;        
-        LOGI(TAG, "RA Freq: %d", rafreq);
-        ledc_set_freq(LEDC_HIGH_SPEED_MODE, ra_pmw_timer.timer_num, rafreq);
-        ledc_set_duty(LEDC_HIGH_SPEED_MODE, ra_pmw_channel.channel, DUTY);        
-        ledc_update_duty(LEDC_HIGH_SPEED_MODE, ra_pmw_channel.channel);
-        gpio_set_level(GPIO_RA_EN, 0);
-    }
+    set_ra_cycles_per_sidereal_day(raCyclesPerSiderealDay);
+    set_dec_cycles_per_day(decCyclesPerDay);
 
-    if (decCyclesPerDay < 0) {
-        decCyclesPerDay = -decCyclesPerDay;
-        if (CONFIG_DEC_REVERSE) {
-            gpio_set_level(GPIO_DEC_DIR, 1);
-        } else {
-            gpio_set_level(GPIO_DEC_DIR, 0);
-        } 
-    } else {
-        if (CONFIG_DEC_REVERSE) {
-            gpio_set_level(GPIO_DEC_DIR, 0);
-        } else {
-            gpio_set_level(GPIO_DEC_DIR, 1);
-        } 
-    }
-
-
-    int decfreq = DEC_FREQ(decCyclesPerDay);
-    if (decCyclesPerDay < DEC_CYCLE_MIN || decfreq == 0) {
-        LOGI(TAG, "DEC Stop");
-        ledc_set_duty(LEDC_HIGH_SPEED_MODE, dec_pmw_channel.channel, 0);
-        ledc_update_duty(LEDC_HIGH_SPEED_MODE, dec_pmw_channel.channel);
-        gpio_set_level(GPIO_DEC_EN, 1);
-    } else {
-        if (decCyclesPerDay > DEC_CYCLE_MAX) decCyclesPerDay = DEC_CYCLE_MAX;        
-        LOGI(TAG, "DEC Freq: %d", decfreq);
-        ledc_set_freq(LEDC_HIGH_SPEED_MODE, dec_pmw_timer.timer_num, decfreq);
-        ledc_set_duty(LEDC_HIGH_SPEED_MODE, dec_pmw_channel.channel, DUTY);        
-        ledc_update_duty(LEDC_HIGH_SPEED_MODE, dec_pmw_channel.channel);
-        gpio_set_level(GPIO_DEC_EN, 0);
-    }
+    updateDisplayStatus();
 }
 
 void slewCallback(double raCyclesPerSiderealDay, double decCyclesPerDay) {
@@ -452,6 +347,14 @@ int parse_command(char* buf, unsigned int len, int fromSocket, struct sockaddr_i
             set_angles(ra, dec);
             LOGI(TAG, "setSideOfPier: %s", sideOfPier ? "BeyondThePole/West" : "Normal/East");
         }break;
+        case CMD_SET_TIME_RATIO: {
+            if (len != 5) return 0;
+            int32_t* newTimeRatioPtr = (int32_t*)(buf + 1);            
+            double timeRatio = (double)(ntohl(*newTimeRatioPtr)) / 1000000.0;
+            set_mount_time_ratio_persist(timeRatio);
+            LOGI(TAG, "setTimeRatio: %f", timeRatio);
+            updateDisplayStatus();
+        }break;
         default:
         LOGI(TAG, "Unknown command: %d", *buf);
         return 0;
@@ -514,24 +417,6 @@ static EventGroupHandle_t wifi_event_group;
 const static int CONNECTED_BIT = BIT0;
 esp_err_t err;
 bool connected = false;
-
-void stepper_gpio_init(){
-    gpio_pad_select_gpio(GPIO_RA_DIR);
-    gpio_set_direction(GPIO_RA_DIR, GPIO_MODE_OUTPUT);
-    gpio_set_level(GPIO_RA_DIR, 1);
-
-    gpio_pad_select_gpio(GPIO_RA_EN);
-    gpio_set_direction(GPIO_RA_EN, GPIO_MODE_OUTPUT);
-    gpio_set_level(GPIO_RA_EN, 1);
-
-    gpio_pad_select_gpio(GPIO_DEC_DIR);
-    gpio_set_direction(GPIO_DEC_DIR, GPIO_MODE_OUTPUT);
-    gpio_set_level(GPIO_DEC_DIR, 1);
-
-    gpio_pad_select_gpio(GPIO_DEC_EN);
-    gpio_set_direction(GPIO_DEC_EN, GPIO_MODE_OUTPUT);
-    gpio_set_level(GPIO_DEC_EN, 1);
-}
 
 esp_timer_handle_t autoDiscoverTimer;
 
@@ -621,17 +506,9 @@ static void wait_wifi(void *p)
             SLEEP(1000);
             esp_restart();
         }
-        esp_timer_start_periodic(autoDiscoverTimer, 1000 * 1000);
-        
-        ledc_channel_config(&ra_pmw_channel);
-        ledc_timer_config(&ra_pmw_timer);
-
-        ledc_channel_config(&dec_pmw_channel);
-        ledc_timer_config(&dec_pmw_timer);
-
+        esp_timer_start_periodic(autoDiscoverTimer, 1000 * 1000);        
         udp_server(NULL);
     }
-
     vTaskDelete(NULL);
 }
 
@@ -698,10 +575,17 @@ void app_main(void)
     LOGI("BOOT", "App main");
     LOGI("BOOT", "esp_timer_init");
     ESP_ERROR_CHECK_ALLOW_INVALID_STATE(esp_timer_init());
-    LOGI("BOOT", "stepper_gpio_init");
-    stepper_gpio_init();    
     LOGI("BOOT", "nvs_flash_init");
-    ESP_ERROR_CHECK(nvs_flash_init());
+    esp_err_t nvs_err = nvs_flash_init();
+    if (nvs_err == ESP_ERR_NVS_NO_FREE_PAGES) {
+        // NVS partition was truncated and needs to be erased
+        // Retry nvs_flash_init
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        nvs_err = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(nvs_err);
+    LOGI("BOOT", "init_mount_encoder");
+    init_mount_encoder();
     LOGI("BOOT", "init_mount");
     init_mount();
     LOGI("BOOT", "init_slew");

@@ -89,22 +89,22 @@ void slew_timer_callback(void* _) {
         decSpeedFactor = (double)absDecDiff / (double)absRaDiff;
         timeToGoMillis = absRaDiff / speed;
     }
-    while (timeToGoMillis < checkIntervalMillis * 4) {
+    while (timeToGoMillis < 16000) {
         LOGI(TAG, "Near target, slow down");
-        bool anySlowDown = false;
-        if (checkIntervalMillis > MIN_CHECK_INTERVAL_MILLIS) {
-            checkIntervalMillis /= 2;
-            anySlowDown = true;
-        }
         if (speed > MIN_SPEED) {
             speed /= 2;
             timeToGoMillis *= 2;
-            anySlowDown = true;
-        }
-        if (!anySlowDown) {
+        } else {
             break;
         }
     }
+    while (timeToGoMillis < checkIntervalMillis * 16) {
+        if (checkIntervalMillis > MIN_CHECK_INTERVAL_MILLIS) {
+            checkIntervalMillis /= 2;
+        } else {
+            break;
+        }
+    }    
     motor_callback(speed * raSpeedFactor * raReverse, speed * decSpeedFactor * decReverse);
     double distanceNow = dist(raDiff, decDiff);
     progress = distanceNow / distance;
@@ -126,9 +126,9 @@ bool is_slewing(){
 }
 
 void abort_slew() {
-    motor_callback(0, 0);
-    esp_timer_stop(slewTimer);
     slewing = false;
+    esp_timer_stop(slewTimer);
+    motor_callback(0, 0);
 }
 
 void slew_to_coordinates(int32_t raMillis, int32_t decMillis){

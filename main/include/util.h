@@ -2,6 +2,7 @@
 #define __UTIL_H
 
 #include "esp_log.h"
+#include "esp_timer.h"
 
 #define LOGI(tag, format, ...) ESP_LOGI(tag, "[%lld] "format, esp_timer_get_time(), ##__VA_ARGS__)
 #define LOGE(tag, format, ...) ESP_LOGE(tag, "[%lld] "format, esp_timer_get_time(), ##__VA_ARGS__)

@@ -28,7 +28,7 @@ void ra_encoder_pul_callback(rencoder_t* target, int32_t pul, int8_t diff, void*
 void dec_encoder_dir_callback(rencoder_t* target, bool dir, void* args);
 void dec_encoder_pul_callback(rencoder_t* target, int32_t pul, int8_t diff, void* args);
 
-void init_mount(){
+void init_mount_encoder(){
     ESP_ERROR_CHECK_ALLOW_INVALID_STATE(rencoder_init());
     ESP_ERROR_CHECK(rencoder_start(&ra_encoder, CONFIG_GPIO_RA_RENCODER_A, CONFIG_GPIO_RA_RENCODER_B, ra_encoder_pul_callback, ra_encoder_dir_callback, CONFIG_RA_REVERSE_RENCODER));
     ESP_ERROR_CHECK(rencoder_start(&dec_encoder, CONFIG_GPIO_DEC_RENCODER_A, CONFIG_GPIO_DEC_RENCODER_B, dec_encoder_pul_callback, dec_encoder_dir_callback, CONFIG_DEC_REVERSE_RENCODER));

@@ -1,6 +1,6 @@
 #include "freertos/FreeRTOS.h"
 
-void init_mount();
+void init_mount_encoder();
 
 int32_t get_ra_pulses_raw();
 int32_t get_dec_pulses_raw();
