@@ -147,4 +147,40 @@ config DEC_REVERSE_RENCODER
 
 endmenu
 
+menu "Focuser"
+
+config GPIO_FOCUS_IN1
+	int "GPIO of ULN2003 IN1"
+	default 5
+
+config GPIO_FOCUS_IN2
+	int "GPIO of ULN2003 IN2"
+	default 18
+
+config GPIO_FOCUS_IN3
+	int "GPIO of ULN2003 IN3"
+	default 21
+
+config GPIO_FOCUS_IN4
+	int "GPIO of ULN2003 IN4"
+	default 23
+
+config FOCUS_TOTAL_MOVEMENT_MICRONS
+	int "Total available movement distance"
+	default 48000
+
+config FOCUS_MOVEMENT_MICRONS_PER_CYCLE
+    int "Movement distance during motor run one cycle"
+	default 12566
+
+config FOCUS_STEPS_PER_CYCLE
+    int "Steps for focus motor to move one cycle"
+	default 16384
+
+config FOCUS_MOVEMENT_SPEED_MICRONS_PER_SECOND
+	int "Focuser movement speed in microns per meter"
+	default 500
+
+endmenu
+
 endmenu

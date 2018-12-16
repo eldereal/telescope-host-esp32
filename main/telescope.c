@@ -27,6 +27,7 @@
 #include "protocol.h"
 #include "slew.h"
 #include "mount.h"
+#include "focuser.h"
 
 const static char *TAG = "Telescope";
 
@@ -51,13 +52,14 @@ const static char *TAG = "Telescope";
 #define CMD_ABORT_SLEW 9
 #define CMD_SET_SIDE_OF_PIER 10
 #define CMD_SET_TIME_RATIO 101
+#define CMD_FOCUSER_MOVE 201
+#define CMD_FOCUSER_ABORT 202
 
 #define PULSE_GUIDING_NONE 0
 #define PULSE_GUIDING_DIR_WEST 4
 #define PULSE_GUIDING_DIR_EAST 3
 #define PULSE_GUIDING_DIR_NORTH 1
 #define PULSE_GUIDING_DIR_SOUTH 2
-
 
 typedef struct {
     char * title;
@@ -355,6 +357,16 @@ int parse_command(char* buf, unsigned int len, int fromSocket, struct sockaddr_i
             LOGI(TAG, "setTimeRatio: %f", timeRatio);
             updateDisplayStatus();
         }break;
+        case CMD_FOCUSER_MOVE: {
+            if (len != 5) return 0;
+            int32_t* stepsPtr = (int32_t*)(buf + 1);
+            int32_t steps = ntohl(*stepsPtr);
+            focuser_move(steps);
+        }break;
+        case CMD_FOCUSER_ABORT: {
+            if (len != 1) return 0;
+            focuser_abort_move();
+        }break;
         default:
         LOGI(TAG, "Unknown command: %d", *buf);
         return 0;
@@ -424,7 +436,7 @@ esp_timer_handle_t autoDiscoverTimer;
 int brdcFd = -1;
 struct sockaddr_in theirAddr[brdcPorts];
 
-void autoDiscoverTick(void* args) {
+void autoDiscoverPrepare() {
     if (brdcFd == -1) {
         brdcFd = socket(PF_INET, SOCK_DGRAM, 0);
             if (brdcFd == -1) {
@@ -441,7 +453,9 @@ void autoDiscoverTick(void* args) {
             theirAddr[i].sin_port = htons(CONFIG_SERVER_BROADCAST_PORT_START + i);                  
         }
     }
-    
+}
+
+void autoDiscoverTick(void* args) {
     broadcast_t data;
     set_broadcast_fields(&data, 
         my_ip_num,
@@ -452,10 +466,14 @@ void autoDiscoverTick(void* args) {
         tracking,
         raSpeed,
         decSpeed,
-        sideOfPier
+        sideOfPier,
+        focuser_get_max_steps(),
+        focuser_get_movement_nanos_per_step(),
+        focuser_get_is_moving()
     );
     
     for (int i = 0; i < brdcPorts; i ++) {
+        LOGI(TAG, "broadcast to port %d", ntohs(theirAddr[i].sin_port));
         sendto(brdcFd, data.buffer, BROADCAST_SIZE, 0, (struct sockaddr *)&(theirAddr[i]), sizeof(struct sockaddr));
     }    
 }
@@ -496,6 +514,9 @@ static void wait_wifi(void *p)
             SLEEP(1000);
             esp_restart();
         }
+
+        LOGI(TAG, "autoDiscoverPrepare");
+        autoDiscoverPrepare();
 
         esp_timer_create_args_t argsAutoDiscover = {
             .dispatch_method = ESP_TIMER_TASK,
@@ -590,6 +611,8 @@ void app_main(void)
     init_mount();
     LOGI("BOOT", "init_slew");
     init_slew(slewCallback);
+    LOGI("BOOT", "focuser_init");
+    focuser_init();
     LOGI("BOOT", "ssd1306_init");
     if (ssd1306_init(0, CONFIG_DISPLAY_SCL, CONFIG_DISPLAY_SDA)) {
         LOGI(TAG, "Display inited");
@@ -622,7 +645,6 @@ void app_main(void)
 uint8_t getSideOfPier() {
     return sideOfPier;
 }
-
 
 /* 90  - 21600000 */
 /* 180 - 43200000 */
