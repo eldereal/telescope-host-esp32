@@ -29,3 +29,11 @@ void set_broadcast_fields(
     BROADCAST_FOCUSER_NANOS_PER_STEP(target->buffer) = htons(focuser_nanos_per_step);
     BROADCAST_FOCUSER_RUNNING(target->buffer) = focuser_running;
 }
+
+void set_ack_fields(
+    ack_t *target,
+    uint32_t cmd_id
+) {
+    ACK_CMD_ID(target->buffer) = htonl(cmd_id);
+    ACK_ZERO(target->buffer) = 0;
+}

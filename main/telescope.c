@@ -70,6 +70,8 @@ typedef struct {
     char title_font;
 } display_t;
 
+void broadcastStatus();
+
 bool displayEnabled = false;
 void updateDisplay(display_t *content) {
     if (!displayEnabled) return;
@@ -188,23 +190,11 @@ void slewCallback(double raCyclesPerSiderealDay, double decCyclesPerDay) {
     updateStepper();
 }
 
-char ackBuf[18];
-int8_t* ackTracking = (int8_t*)ackBuf;
-char* ackPulseGuiding = ackBuf + 1;
-int* ackRaSpeed = (int*)(ackBuf + 2);
-int* ackDecSpeed = (int*)(ackBuf + 6);
-int* ackRaGuideSpeed = (int*)(ackBuf + 10);
-int* ackDecGuideSpeed = (int*)(ackBuf + 14);
-
-void sendAck(int sock, struct sockaddr_in *addr, socklen_t addrlen) {    
-    *ackTracking = tracking;
-    *ackPulseGuiding = pulseGuiding;
-    *ackRaSpeed = ntohl(raSpeed);
-    *ackDecSpeed = ntohl(decSpeed);
-    *ackRaGuideSpeed = ntohl(raGuideSpeed);
-    *ackDecGuideSpeed = ntohl(decGuideSpeed);
+void sendAck(int sock, struct sockaddr_in *addr, socklen_t addrlen) {
+    ack_t ackBuffer;
+    set_ack_fields(&ackBuffer, 0);
     LOGI(TAG, "ack to %s:%d", inet_ntoa(addr->sin_addr), addr->sin_port);
-    sendto(sock, ackBuf, LEN(ackBuf), 0, (struct sockaddr *) addr, addrlen);    
+    sendto(sock, ackBuffer.buffer, ACK_SIZE, 0, (struct sockaddr *) addr, addrlen);    
 }
 
 esp_timer_handle_t pulseGuidingTimer;
@@ -216,7 +206,7 @@ void pulseGuidingFinished(void* args) {
     pulseGuiding = PULSE_GUIDING_NONE;
     updateStepper();
     LOGI(TAG, "pulseGuide finished");
-    sendAck(lastPulseGuidingSocket, &lastPulseGuidingFrom, lastPulseGuidingFromLen);
+    broadcastStatus();
 }
 
 const char* getPulseDirDescr(int dir){
@@ -455,7 +445,7 @@ void autoDiscoverPrepare() {
     }
 }
 
-void autoDiscoverTick(void* args) {
+void broadcastStatus() {
     broadcast_t data;
     set_broadcast_fields(&data, 
         my_ip_num,
@@ -475,7 +465,11 @@ void autoDiscoverTick(void* args) {
     for (int i = 0; i < brdcPorts; i ++) {
         LOGI(TAG, "broadcast to port %d", ntohs(theirAddr[i].sin_port));
         sendto(brdcFd, data.buffer, BROADCAST_SIZE, 0, (struct sockaddr *)&(theirAddr[i]), sizeof(struct sockaddr));
-    }    
+    }
+}
+
+void autoDiscoverTick(void* args) {
+    broadcastStatus();
 }
 
 static void wait_wifi(void *p)

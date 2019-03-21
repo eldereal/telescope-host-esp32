@@ -47,8 +47,11 @@ void focuser_timer_listener(void* args) {
         esp_timer_stop(focuser_timer);
         return;
     }
-    
-    bool *output = focuser_step_config[focuser_step % 8];
+    int32_t index = focuser_step % 8;
+    if (index < 0) {
+        index += 8;
+    }
+    bool *output = focuser_step_config[index];
     for (int i = 0; i < 4; i++) {            
         gpio_set_level(focuser_gpio_nums[i], output[i]);
     }

@@ -37,6 +37,19 @@ void set_broadcast_fields(
     bool focuser_running
 );
 
+#define ACK_SIZE 6
+#define ACK_CMD_ID(B) (*((uint32_t*)(B)))
+#define ACK_ZERO(B) (*((uint16_t*)((B) + 4)))
+
+typedef struct ack {
+    uint8_t buffer[ACK_SIZE];
+} ack_t;
+
+void set_ack_fields(
+    ack_t *target,
+    uint32_t cmd_id
+);
+
 
     // /* IP     */ *(uint32_t*)(buffer    )  = htonl(my_ip_num);
     // /* Port   */ *(uint16_t*)(buffer + 4)  = htons(UDP_PORT);
