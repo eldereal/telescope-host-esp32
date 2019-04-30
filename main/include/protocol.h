@@ -31,13 +31,4 @@ void set_broadcast_fields(
     uint8_t side_of_pier // 0: Normal (East); 1: Beyond the pole (West)
 );
 
-
-    // /* IP     */ *(uint32_t*)(buffer    )  = htonl(my_ip_num);
-    // /* Port   */ *(uint16_t*)(buffer + 4)  = htons(UDP_PORT);
-    // /* RADIR  */ *(uint8_t* )(buffer + 6)  = get_ra_direction() ? 1 : 0;
-    // /* RATICK */ *(int32_t* )(buffer + 7)  = htonl(get_ra_pulses_raw());
-    // /* DECDIR */ *(uint8_t* )(buffer + 11) = get_dec_direction() ? 1 : 0;
-    // /* DECTICK*/ *(int32_t* )(buffer + 12) = htonl(get_dec_pulses_raw());
-
-
 #endif
