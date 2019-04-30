@@ -35,24 +35,6 @@ config DISPLAY_SDA
 
 menu "Right Ascension"
 
-config GPIO_RA_RENCODER_A
-    int "Rotatry encoder phase A"
-	range 0 34
-	default 0
-
-config GPIO_RA_RENCODER_B
-    int "Rotatry encoder phase B"
-	range 0 34
-	default 2
-
-config GPIO_RA_RENCODER_PULSES
-    int "Rotatry encoder pulses per cycle"
-	default 2400
-
-config RA_BACKLASH_PULSES
-    int "Axis backlash pulses in rotatry encoder"
-	default 23
-
 config GPIO_RA_EN
     int "Motor EN pin"
 	range 0 34
@@ -84,31 +66,9 @@ config RA_REVERSE
 	bool "Reverse Motor"
 	default false
 
-config RA_REVERSE_RENCODER
-	bool "Reverse Rotatry Encoder"
-	default false
-
 endmenu
 
 menu "Declination"
-
-config GPIO_DEC_RENCODER_A
-    int "Rotatry encoder phase A"
-	range 0 34
-	default 16
-
-config GPIO_DEC_RENCODER_B
-    int "Rotatry encoder phase B"
-	range 0 34
-	default 17
-
-config GPIO_DEC_RENCODER_PULSES
-    int "Rotatry encoder pulses per cycle"
-	default 2400
-
-config DEC_BACKLASH_PULSES
-    int "Axis backlash pulses in rotatry encoder"
-	default 21
 
 config GPIO_DEC_EN
     int "Motor EN pin"
@@ -139,10 +99,6 @@ config DEC_GEAR_RATIO
 
 config DEC_REVERSE
 	bool "Reverse Motor"
-	default false
-
-config DEC_REVERSE_RENCODER
-	bool "Reverse Rotatry Encoder"
 	default false
 
 endmenu
