@@ -5,6 +5,7 @@
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "math.h"
+#include "mount_encoder.h"
 
 /* ------ utils ----------- */
 #define DUTY_RES LEDC_TIMER_13_BIT
@@ -155,8 +156,10 @@ double get_mount_time_ratio() {
 
 void set_ra_cycles_per_sidereal_day(double value) {
     raCyclesPerSiderealDay = value;
+    bool freqIsNeg = false;
     if (raCyclesPerSiderealDay < 0) {
         raCyclesPerSiderealDay = -raCyclesPerSiderealDay;
+        freqIsNeg = true;
         if (CONFIG_RA_REVERSE) {
             gpio_set_level(GPIO_RA_DIR, 1);
         } else {
@@ -177,6 +180,7 @@ void set_ra_cycles_per_sidereal_day(double value) {
         ledc_set_duty(LEDC_HIGH_SPEED_MODE, ra_pmw_channel.channel, 0);
         ledc_update_duty(LEDC_HIGH_SPEED_MODE, ra_pmw_channel.channel);
         gpio_set_level(GPIO_RA_EN, 1);
+        ra_pulse_freq_changed(0);
     } else {
         if (raCyclesPerSiderealDay > RA_CYCLE_MAX) raCyclesPerSiderealDay = RA_CYCLE_MAX;        
         LOGI(TAG, "RA Freq: %d (%f)", rafreq, raActualFreq);
@@ -184,13 +188,16 @@ void set_ra_cycles_per_sidereal_day(double value) {
         ledc_set_duty(LEDC_HIGH_SPEED_MODE, ra_pmw_channel.channel, DUTY);        
         ledc_update_duty(LEDC_HIGH_SPEED_MODE, ra_pmw_channel.channel);
         gpio_set_level(GPIO_RA_EN, 0);
+        ra_pulse_freq_changed(freqIsNeg ? -rafreq : rafreq);
     }
 }
 
 void set_dec_cycles_per_day(double value) {
     decCyclesPerDay = value;
+    bool freqIsNeg = false;
     if (decCyclesPerDay < 0) {
         decCyclesPerDay = -decCyclesPerDay;
+        freqIsNeg = true;
         if (CONFIG_DEC_REVERSE) {
             gpio_set_level(GPIO_DEC_DIR, 1);
         } else {
@@ -211,6 +218,7 @@ void set_dec_cycles_per_day(double value) {
         ledc_set_duty(LEDC_HIGH_SPEED_MODE, dec_pmw_channel.channel, 0);
         ledc_update_duty(LEDC_HIGH_SPEED_MODE, dec_pmw_channel.channel);
         gpio_set_level(GPIO_DEC_EN, 1);
+        dec_pulse_freq_changed(0);
     } else {
         if (decCyclesPerDay > DEC_CYCLE_MAX) decCyclesPerDay = DEC_CYCLE_MAX;        
         LOGI(TAG, "DEC Freq: %d (%f)", decfreq, decActualFreq);
@@ -218,6 +226,7 @@ void set_dec_cycles_per_day(double value) {
         ledc_set_duty(LEDC_HIGH_SPEED_MODE, dec_pmw_channel.channel, DUTY);        
         ledc_update_duty(LEDC_HIGH_SPEED_MODE, dec_pmw_channel.channel);
         gpio_set_level(GPIO_DEC_EN, 0);
+        dec_pulse_freq_changed(freqIsNeg ? -decfreq : decfreq);
     }
 }
 
