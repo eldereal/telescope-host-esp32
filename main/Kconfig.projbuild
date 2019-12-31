@@ -33,6 +33,11 @@ config DISPLAY_SDA
 	range 0 34
 	default 22
 
+config GPIO_TRACK_PIN
+	int "Track control pin"
+	range 0 34
+	default 2
+
 menu "Right Ascension"
 
 config GPIO_RA_RENCODER_A

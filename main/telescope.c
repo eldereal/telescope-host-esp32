@@ -73,20 +73,49 @@ typedef struct {
 void broadcastStatus();
 
 bool displayEnabled = false;
-void updateDisplay(display_t *content) {
+
+display_t displayed;
+
+void initDisplay() {
+    displayed.title = malloc(32);
+    displayed.line1 = malloc(32);
+    displayed.line2 = malloc(32);
+    displayed.line3 = malloc(32);
+    bzero(displayed.title, 32);
+    bzero(displayed.line1, 32);
+    bzero(displayed.line2, 32);
+    bzero(displayed.line3, 32);
+}
+
+void updateDisplay() {
+    LOGI("DISPLAY", "\n    %s\n    %s\n    %s\n    %s", displayed.title, displayed.line1, displayed.line2, displayed.line3);
     if (!displayEnabled) return;
     ssd1306_clear(0);    
-    ssd1306_select_font(0, content->title_font ? content->title_font - 1 : 1);
-    if (content->title) ssd1306_draw_string(0, 1, 3, content->title, 1, 0);
-    ssd1306_select_font(0, content->line_font ? content->line_font - 1 : 1);
-    if (content->line1) ssd1306_draw_string(0, 1, 19, content->line1, 1, 0);
-    if (content->line2) ssd1306_draw_string(0, 1, 35, content->line2, 1, 0);
-    if (content->line3) ssd1306_draw_string(0, 1, 51, content->line3, 1, 0);
+    ssd1306_select_font(0, displayed.title_font ? displayed.title_font - 1 : 1);
+    if (displayed.title) ssd1306_draw_string(0, 1, 3, displayed.title, 1, 0);
+    ssd1306_select_font(0, displayed.line_font ? displayed.line_font - 1 : 1);
+    if (displayed.line1) ssd1306_draw_string(0, 1, 19, displayed.line1, 1, 0);
+    if (displayed.line2) ssd1306_draw_string(0, 1, 35, displayed.line2, 1, 0);
+    if (displayed.line3) ssd1306_draw_string(0, 1, 51, displayed.line3, 1, 0);
     // ssd1306_draw_rectangle(0, 0, 0, 128, 16, 1);
 	// ssd1306_draw_rectangle(0, 0, 16, 128, 48, 1);
     ssd1306_refresh(0, true);
 }
+
+void updateDisplayTitle(const char* title) {
+    strncpy(displayed.title, title, 32);
+    updateDisplay();
+}
+
+void updateDisplayContent(const char* line1, const char* line2, const char* line3) {
+    strncpy(displayed.line1, line1, 32);
+    strncpy(displayed.line2, line2, 32);
+    strncpy(displayed.line3, line3, 32);
+    updateDisplay();
+}
+
 int8_t tracking = 0;
+int8_t hardware_tracking = 0;
 char pulseGuiding = 0;
 int raSpeed = 0, decSpeed = 0, raGuideSpeed = 7500, decGuideSpeed = 7500;
 uint8_t sideOfPier = 0;
@@ -170,7 +199,7 @@ void updateDisplayStatus(){
         int timeToGo = get_slew_time_to_go_millis() / 1000;
         sprintf(stepper_line3, "Slew %d%% eta %02d:%02d", progress, timeToGo / 60, timeToGo % 60);
     }
-    updateDisplay(&stepper_display);
+    updateDisplayContent(stepper_display.line1, stepper_display.line2, stepper_display.line3);
 }
 
 void updateStepper() {
@@ -234,6 +263,7 @@ int parse_command(char* buf, unsigned int len, int fromSocket, struct sockaddr_i
         case CMD_SET_TRACKING: {
             if (len != 2) return 0;
             if (is_slewing()) return 0;
+            if (hardware_tracking) return 0;
             int8_t* newTracking = (int8_t*)(buf + 1);
             tracking = *newTracking;
             updateStepper();
@@ -365,8 +395,6 @@ int parse_command(char* buf, unsigned int len, int fromSocket, struct sockaddr_i
     return 1;
 }
 
-
-
 void udp_server(void *pvParameter) {
 
     LOGI(TAG, "Server Started");
@@ -415,12 +443,8 @@ void udp_server(void *pvParameter) {
     }
 }
 
-static EventGroupHandle_t wifi_event_group;
-const static int CONNECTED_BIT = BIT0;
-esp_err_t err;
-bool connected = false;
-
-esp_timer_handle_t autoDiscoverTimer;
+// static EventGroupHandle_t wifi_started_event;
+// static EventGroupHandle_t wifi_stopped_event;
 
 #define brdcPorts (CONFIG_SERVER_BROADCAST_PORT_LENGTH)
 int brdcFd = -1;
@@ -463,102 +487,120 @@ void broadcastStatus() {
     );
     
     for (int i = 0; i < brdcPorts; i ++) {
-        LOGI(TAG, "broadcast to port %d", ntohs(theirAddr[i].sin_port));
+        // LOGI(TAG, "Auto discover broadcast to port %d", ntohs(theirAddr[i].sin_port));
         sendto(brdcFd, data.buffer, BROADCAST_SIZE, 0, (struct sockaddr *)&(theirAddr[i]), sizeof(struct sockaddr));
     }
 }
 
-void autoDiscoverTick(void* args) {
-    broadcastStatus();
-}
-
-static void wait_wifi(void *p)
-{
-    while (1) {
-        LOGI(TAG, "Waiting for AP connection...");
-        int dots = 0;
-        EventBits_t bits = xEventGroupWaitBits(wifi_event_group, CONNECTED_BIT, false, true, 1000 / portTICK_PERIOD_MS);
-        while(!bits) {
-            dots = (dots + 1) % 4;
-            char searching[20] = "Searching WiFi \0\0\0\0";
-            for (int i = 0; i < dots; i ++) {
-                searching[i + (15/* "Searching WiFi ".length */)] = '.';
-            }
-            display_t disp = {
-                .title = searching,
-                .line1 = "WiFi config:",
-                .line2 = "SSID: "WIFI_SSID,
-                .line3 = "PASS: "WIFI_PASS,
-            };
-            updateDisplay(&disp);
-            bits = xEventGroupWaitBits(wifi_event_group, CONNECTED_BIT, false, true, 1000 / portTICK_PERIOD_MS);
-        }
-        LOGI(TAG, "Connected to AP");
-
-        connected = true;
-
+void autoDiscoverLoop(void* p) {
+    LOGI(TAG, "Auto Discover Prepare");
+    autoDiscoverPrepare();
+    while(1) {
         SLEEP(1000);
-
-        esp_timer_create_args_t args = {
-            .dispatch_method = ESP_TIMER_TASK,
-            .callback = pulseGuidingFinished
-        };
-        if (esp_timer_create(&args, &pulseGuidingTimer) != ESP_OK) {
-            LOGI(TAG, "Failed to create pulse guiding timers");
-            SLEEP(1000);
-            esp_restart();
-        }
-
-        LOGI(TAG, "autoDiscoverPrepare");
-        autoDiscoverPrepare();
-
-        esp_timer_create_args_t argsAutoDiscover = {
-            .dispatch_method = ESP_TIMER_TASK,
-            .callback = autoDiscoverTick
-        };
-        if (esp_timer_create(&argsAutoDiscover, &autoDiscoverTimer) != ESP_OK) {
-            LOGI(TAG, "Failed to create auto discover timers");
-            SLEEP(1000);
-            esp_restart();
-        }
-        esp_timer_start_periodic(autoDiscoverTimer, 1000 * 1000);        
-        udp_server(NULL);
+        broadcastStatus();        
     }
+    LOGI(TAG, "Auto Discover Stopped");
     vTaskDelete(NULL);
 }
+
+void track_button_init() {
+    gpio_config_t conf;
+    conf.intr_type = GPIO_INTR_DISABLE;
+    conf.mode = GPIO_MODE_INPUT;
+    conf.pin_bit_mask = 1 << CONFIG_GPIO_TRACK_PIN;
+    conf.pull_up_en = GPIO_PULLUP_ENABLE;
+    conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    gpio_config(&conf);
+}
+
+static bool TRACK_BTN_PRESSED = 0;
+
+void track_button_loop(void* p) {
+    bool oldval = gpio_get_level(CONFIG_GPIO_TRACK_PIN);
+    if (oldval == TRACK_BTN_PRESSED) {
+        hardware_tracking = true;
+        tracking = true;
+        updateStepper();
+    }
+    while(1) {
+        SLEEP(100);
+        bool val = gpio_get_level(CONFIG_GPIO_TRACK_PIN);
+        if (val != oldval) {
+            oldval = val;
+            if (oldval == TRACK_BTN_PRESSED) {
+                hardware_tracking = true;
+                tracking = true;
+                updateStepper();
+            } else {
+                hardware_tracking = false;
+                tracking = false;
+                updateStepper();
+            }
+        }
+    }
+}
+
+// static void wait_wifi(void *p)
+// {
+//     while (1) {
+//         LOGI(TAG, "Waiting for AP connection...");
+//         int ticks = 0;
+//         EventBits_t bits = xEventGroupWaitBits(wifi_started_event, BIT0, false, true, 1000 / portTICK_PERIOD_MS);
+//         while(!bits) {
+//             switch (ticks)
+//             {
+//             case 0:
+//                 updateDisplayTitle("Searching WiFi");
+//                 break;
+//             case 1:
+//                 updateDisplayTitle("SSID: "WIFI_SSID);
+//                 break;
+//             case 2:
+//                 updateDisplayTitle("PASS: "WIFI_PASS);
+//                 break;
+//             }
+//             ticks = (ticks + 1) % 3;            
+//             bits = xEventGroupWaitBits(wifi_started_event, BIT0, false, true, 1000 / portTICK_PERIOD_MS);
+//         }
+//         LOGI(TAG, "Connected to AP");        
+//     }
+//     vTaskDelete(NULL);
+// }
+
+int disconnect_ticks = 0;
 
 static esp_err_t wifi_event_handler(void *ctx, system_event_t *event)
 {
     switch(event->event_id) {
     case SYSTEM_EVENT_STA_START:
+        LOGI(TAG, "WiFi event SYSTEM_EVENT_STA_START");
+        updateDisplayTitle("Searching WiFi");
         esp_wifi_connect();
         break;
     case SYSTEM_EVENT_STA_GOT_IP:
         sprintf(my_ip, "%s", inet_ntoa(event->event_info.got_ip.ip_info.ip));
         my_ip_num = ntohl(event->event_info.got_ip.ip_info.ip.addr);
-        sprintf(my_ip_port, "%s:%d", my_ip, UDP_PORT);
-        xEventGroupSetBits(wifi_event_group, CONNECTED_BIT);
+        sprintf(my_ip_port, "%s:%d", my_ip, UDP_PORT);        
+        updateDisplayTitle(my_ip_port);
+        // xEventGroupSetBits(wifi_started_event, BIT0);
+        disconnect_ticks = 0;
         break;
     case SYSTEM_EVENT_STA_DISCONNECTED:
-        if (!connected) {
-            esp_wifi_connect();
-            xEventGroupClearBits(wifi_event_group, CONNECTED_BIT);
-        } else {
-            for (int i = 3; i > 0; i --) {
-                char buf[20];
-                sprintf(buf, "Restart in %d sec", i);
-                LOGE(TAG, "WiFi disconnected, %s", buf);
-                display_t disp = {
-                    .title = "WiFi Disconnected",
-                    .line1 = buf,
-                    .line2 = "",
-                    .line3 = "",
-                };
-                updateDisplay(&disp);
-                SLEEP(1000);
-            }
-            esp_restart();        
+        LOGI(TAG, "WiFi event SYSTEM_EVENT_STA_DISCONNECTED");
+        esp_wifi_connect();
+        switch (disconnect_ticks)
+        {
+        case 0:
+            updateDisplayTitle("Searching WiFi");
+            break;
+        case 1:
+            updateDisplayTitle("SSID: "WIFI_SSID);
+            break;
+        case 2:
+            updateDisplayTitle("PASS: "WIFI_PASS);
+            break;
         }
+        disconnect_ticks = (disconnect_ticks + 1) % 3;  
         break;
     default:
         break;
@@ -569,7 +611,8 @@ static esp_err_t wifi_event_handler(void *ctx, system_event_t *event)
 static void wifi_conn_init(void)
 {
     tcpip_adapter_init();
-    wifi_event_group = xEventGroupCreate();
+    // wifi_started_event = xEventGroupCreate();
+    // wifi_stopped_event = xEventGroupCreate();
     ESP_ERROR_CHECK( esp_event_loop_init(wifi_event_handler, NULL) );
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK( esp_wifi_init(&cfg) );
@@ -622,18 +665,27 @@ void app_main(void)
             displayEnabled = false;
         }
     }
-    display_t disp = {
-        .title = "Searching WiFi",
-        .line1 = "WiFi config:",
-        .line2 = "SSID: "WIFI_SSID,
-        .line3 = "PASS: "WIFI_PASS,
+    LOGI("BOOT", "initDisplay");
+    initDisplay();
+
+    esp_timer_create_args_t args = {
+        .dispatch_method = ESP_TIMER_TASK,
+        .callback = pulseGuidingFinished
     };
-    LOGI("BOOT", "updateDisplay");
-    updateDisplay(&disp);
+    if (esp_timer_create(&args, &pulseGuidingTimer) != ESP_OK) {
+        LOGI(TAG, "Failed to create pulse guiding timers");
+        SLEEP(1000);
+        esp_restart();
+    }
+
     LOGI("BOOT", "wifi_conn_init");
     wifi_conn_init();
-    LOGI("BOOT", "xTaskCreate wait_wifi");
-    xTaskCreate(wait_wifi, TAG, 4096, NULL, 5, NULL);
+    track_button_init();
+    // LOGI("BOOT", "xTaskCreate wait_wifi");
+    // xTaskCreate(wait_wifi, TAG, 4096, NULL, 5, NULL);
+    xTaskCreate(autoDiscoverLoop, "autoDiscoverLoop", 4096, NULL, 5, NULL);
+    xTaskCreate(udp_server, "udp_server", 4096, NULL, 5, NULL);
+    xTaskCreate(track_button_loop, "track_button_loop", 4096, NULL, 5, NULL);
 }
 
 uint8_t getSideOfPier() {
