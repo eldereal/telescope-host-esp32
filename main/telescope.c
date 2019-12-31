@@ -642,10 +642,10 @@ void app_main(void)
         nvs_err = nvs_flash_init();
     }
     ESP_ERROR_CHECK(nvs_err);
-    LOGI("BOOT", "init_mount_encoder");
-    init_mount_encoder();
     LOGI("BOOT", "init_mount");
     init_mount();
+    LOGI("BOOT", "init_mount_encoder");
+    init_mount_encoder();
     LOGI("BOOT", "init_slew");
     init_slew(slewCallback);
     LOGI("BOOT", "focuser_init");
